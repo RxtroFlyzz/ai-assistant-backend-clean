@@ -1,0 +1,35 @@
+# chatbot-client.ps1
+# Script PowerShell pour discuter avec ton chatbot FastAPI
+
+# ======== Configuration UTF-8 ========
+chcp 65001 | Out-Null
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+# ======== URL de ton serveur FastAPI ========
+$apiUrl = "http://127.0.0.1:3000/chat"
+
+Write-Host "Bienvenue dans le chat avec ton chatbot !" -ForegroundColor Cyan
+Write-Host "Tape 'exit' pour quitter.`n" -ForegroundColor Cyan
+
+while ($true) {
+    # Saisir le message utilisateur
+    $userMessage = Read-Host "Vous"
+    if ($userMessage -eq "exit") { break }
+
+    # Préparer le corps JSON
+    $body = @{ message = $userMessage } | ConvertTo-Json -Compress
+
+    try {
+        # Envoyer la requête POST
+        $response = Invoke-RestMethod -Uri $apiUrl `
+                                      -Method POST `
+                                      -Body ($body | Out-String) `
+                                      -ContentType "application/json; charset=utf-8"
+
+        # Afficher la réponse
+        Write-Host "Chatbot: $($response.reply)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Erreur lors de la requête : $_" -ForegroundColor Red
+    }
+}
