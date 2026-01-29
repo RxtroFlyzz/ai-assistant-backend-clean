@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 import uuid
 import os
 import re
+import smtplib
+from email.message import EmailMessage
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -33,7 +35,7 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # =========================
-# DB DEPENDENCY
+# DB
 # =========================
 
 def get_db():
@@ -53,24 +55,54 @@ class ChatRequest(BaseModel):
     page_content: Optional[str] = None
 
 # =========================
-# OUTILS
+# REGEX & TEXTES
 # =========================
 
 HUMAN_REGEX = re.compile(
-    r"(assistant|conseiller|humain|personne|agent|support|service client|parler).*",
+    r"(assistant|humain|conseiller|agent|support|service client|personne|quelqu'un)",
     re.IGNORECASE
 )
 
-NO_INFO_REGEX = re.compile(
-    r"(ne (mentionne|fournit|précise) pas|aucune information|non disponible)",
+YES_REGEX = re.compile(
+    r"^(oui|ok|okay|d'accord|yes|yep|bien sûr|svp)$",
     re.IGNORECASE
 )
 
-HUMAN_REPLY = (
+HUMAN_PROPOSAL = (
     "Ces informations ne sont pas fournies sur le site.\n\n"
-    "Souhaitez-vous que je vous redirige vers un assistant humain "
-    "qui puisse vous aider ?"
+    "Souhaitez-vous être mis en relation avec un assistant humain ?"
 )
+
+HUMAN_CONFIRMED = (
+    "Parfait 😊\n\n"
+    "Un assistant humain va vous recontacter très rapidement."
+)
+
+# =========================
+# EMAIL
+# =========================
+
+def send_human_email(user_message: str):
+    msg = EmailMessage()
+    msg["Subject"] = "🔔 Nouveau client à contacter"
+    msg["From"] = os.getenv("SMTP_FROM")
+    msg["To"] = os.getenv("CLIENT_EMAIL")
+
+    msg.set_content(
+        f"""
+Un visiteur souhaite parler à un assistant humain.
+
+Message :
+{user_message}
+
+Connectez-vous pour le recontacter.
+"""
+    )
+
+    with smtplib.SMTP(os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT"))) as server:
+        server.starttls()
+        server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS"))
+        server.send_message(msg)
 
 # =========================
 # ROUTE CHAT
@@ -93,7 +125,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         db.add(conversation)
         db.commit()
 
-    # Sauvegarde message utilisateur
+    # Message utilisateur
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
@@ -103,7 +135,34 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     db.commit()
 
     # =========================
-    # 🔴 DÉCLENCHEUR 1 : HUMAIN DEMANDÉ
+    # CONFIRMATION HUMAIN
+    # =========================
+
+    last_ai = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conv_id,
+        MessageModel.role == "assistant"
+    ).order_by(MessageModel.created_at.desc()).first()
+
+    if last_ai and "assistant humain" in last_ai.content.lower():
+        if YES_REGEX.match(msg.message.strip()):
+            send_human_email(msg.message)
+
+            db.add(MessageModel(
+                id=str(uuid.uuid4()),
+                conversation_id=conv_id,
+                role="assistant",
+                content=HUMAN_CONFIRMED
+            ))
+            db.commit()
+
+            return {
+                "reply": HUMAN_CONFIRMED,
+                "conversation_id": conv_id,
+                "needs_human": True
+            }
+
+    # =========================
+    # DEMANDE HUMAIN DIRECTE
     # =========================
 
     if HUMAN_REGEX.search(msg.message):
@@ -111,12 +170,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             id=str(uuid.uuid4()),
             conversation_id=conv_id,
             role="assistant",
-            content=HUMAN_REPLY
+            content=HUMAN_PROPOSAL
         ))
         db.commit()
 
         return {
-            "reply": HUMAN_REPLY,
+            "reply": HUMAN_PROPOSAL,
             "conversation_id": conv_id,
             "needs_human": True
         }
@@ -140,9 +199,9 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
                 f"{msg.page_content}\n\n"
                 "RÈGLES STRICTES :\n"
                 "- Tu travailles UNIQUEMENT pour ce site\n"
-                "- Tu ne dis JAMAIS que tu es une IA générale\n"
-                "- Tu ne réponds QUE si l'information est présente\n"
-                "- Sinon dis que l'information n'est pas fournie\n"
+                "- Tu ne te présentes JAMAIS comme une IA générale\n"
+                "- Tu n'inventes RIEN\n"
+                "- Si info absente → propose assistant humain"
             )
         })
 
@@ -152,26 +211,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "content": m.content
         })
 
-    # =========================
-    # OPENAI
-    # =========================
-
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=messages_for_openai
     )
 
     reply = response.choices[0].message.content
-
-    # =========================
-    # 🔴 DÉCLENCHEUR 2 : INFO ABSENTE → HUMAIN
-    # =========================
-
-    if NO_INFO_REGEX.search(reply):
-        reply = HUMAN_REPLY
-        needs_human = True
-    else:
-        needs_human = False
 
     db.add(MessageModel(
         id=str(uuid.uuid4()),
@@ -184,6 +229,5 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     return {
         "reply": reply,
         "conversation_id": conv_id,
-        "needs_human": needs_human
+        "needs_human": False
     }
-
