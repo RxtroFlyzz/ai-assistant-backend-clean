@@ -20,10 +20,12 @@ from models import Base, Conversation, Message as MessageModel
 # =========================
 
 load_dotenv()
+
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,21 +57,25 @@ class ChatRequest(BaseModel):
     page_content: Optional[str] = None
 
 # =========================
-# REGEX & TEXTES
+# REGEX
 # =========================
 
 HUMAN_REGEX = re.compile(
-    r"(assistant|humain|conseiller|agent|support|service client|personne|quelqu'un)",
+    r"(assistant|humain|conseiller|agent|support|service client|personne|quelqu'un|contact)",
     re.IGNORECASE
 )
 
 YES_REGEX = re.compile(
-    r"^(oui|ok|okay|d'accord|yes|yep|bien sûr|svp)$",
+    r"^(oui|ok|okay|d'accord|yes|yep|bien sûr|svp|oui svp)$",
     re.IGNORECASE
 )
 
+# =========================
+# TEXTES
+# =========================
+
 HUMAN_PROPOSAL = (
-    "Ces informations ne sont pas fournies sur le site.\n\n"
+    "Ces informations ne sont pas disponibles.\n\n"
     "Souhaitez-vous être mis en relation avec un assistant humain ?"
 )
 
@@ -82,27 +88,55 @@ HUMAN_CONFIRMED = (
 # EMAIL
 # =========================
 
-def send_human_email(user_message: str):
-    msg = EmailMessage()
-    msg["Subject"] = "🔔 Nouveau client à contacter"
-    msg["From"] = os.getenv("SMTP_FROM")
-    msg["To"] = os.getenv("CLIENT_EMAIL")
+def send_human_email(conv_id: str, user_message: str):
 
-    msg.set_content(
-        f"""
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = os.getenv("SMTP_PORT")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    smtp_from = os.getenv("SMTP_FROM")
+    client_email = os.getenv("CLIENT_EMAIL")
+
+    # Vérification config
+    if not all([
+        smtp_host,
+        smtp_port,
+        smtp_user,
+        smtp_pass,
+        smtp_from,
+        client_email
+    ]):
+        print("❌ SMTP CONFIG INCOMPLETE")
+        return
+
+    try:
+        msg = EmailMessage()
+
+        msg["Subject"] = "📞 Nouveau client à rappeler"
+        msg["From"] = smtp_from
+        msg["To"] = client_email
+
+        msg.set_content(f"""
 Un visiteur souhaite parler à un assistant humain.
 
-Message :
+Conversation ID :
+{conv_id}
+
+Dernier message :
 {user_message}
 
-Connectez-vous pour le recontacter.
-"""
-    )
+Merci de le recontacter rapidement.
+""")
 
-    with smtplib.SMTP(os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT"))) as server:
-        server.starttls()
-        server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS"))
-        server.send_message(msg)
+        with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        print("✅ EMAIL SENT")
+
+    except Exception as e:
+        print("❌ EMAIL ERROR:", e)
 
 # =========================
 # ROUTE CHAT
@@ -111,8 +145,10 @@ Connectez-vous pour le recontacter.
 @app.post("/chat")
 def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
+    # ID conversation
     conv_id = msg.conversation_id or str(uuid.uuid4())
 
+    # Conversation
     conversation = db.query(Conversation).filter(
         Conversation.id == conv_id
     ).first()
@@ -120,12 +156,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     if not conversation:
         conversation = Conversation(
             id=conv_id,
-            title="Conversation site client"
+            title="Conversation client"
         )
         db.add(conversation)
         db.commit()
 
-    # Message utilisateur
+    # Message user
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
@@ -144,8 +180,10 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ).order_by(MessageModel.created_at.desc()).first()
 
     if last_ai and "assistant humain" in last_ai.content.lower():
-        if YES_REGEX.match(msg.message.strip()):
-            send_human_email(msg.message)
+
+        if YES_REGEX.match(msg.message.strip().lower()):
+
+            send_human_email(conv_id, msg.message)
 
             db.add(MessageModel(
                 id=str(uuid.uuid4()),
@@ -166,6 +204,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     # =========================
 
     if HUMAN_REGEX.search(msg.message):
+
         db.add(MessageModel(
             id=str(uuid.uuid4()),
             conversation_id=conv_id,
@@ -190,18 +229,22 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     messages_for_openai = []
 
+    # =========================
+    # CONTEXTE SITE
+    # =========================
+
     if msg.page_content:
+
         messages_for_openai.append({
             "role": "system",
             "content": (
                 "Tu es l'assistant officiel du site web.\n\n"
                 "CONTENU DU SITE :\n"
                 f"{msg.page_content}\n\n"
-                "RÈGLES STRICTES :\n"
-                "- Tu travailles UNIQUEMENT pour ce site\n"
-                "- Tu ne te présentes JAMAIS comme une IA générale\n"
-                "- Tu n'inventes RIEN\n"
-                "- Si info absente → propose assistant humain"
+                "RÈGLES :\n"
+                "- Tu travailles uniquement pour ce site\n"
+                "- Tu n'inventes rien\n"
+                "- Si info absente → propose humain"
             )
         })
 
@@ -211,6 +254,10 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "content": m.content
         })
 
+    # =========================
+    # OPENAI
+    # =========================
+
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=messages_for_openai
@@ -218,6 +265,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     reply = response.choices[0].message.content
 
+    # Save AI msg
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
