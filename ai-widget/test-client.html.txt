@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Plomberie Martin – Paris</title>
+  <meta name="description" content="Plombier professionnel à Paris – Dépannage, installation, urgence 24/7">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1, h2 {
+      color: #0a4fa3;
+    }
+    section {
+      margin-bottom: 40px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Plomberie Martin</h1>
+  <p>
+    Plombier professionnel à Paris depuis plus de 15 ans.
+    Intervention rapide, devis gratuit, travail garanti.
+  </p>
+
+  <section>
+    <h2>Nos services</h2>
+    <ul>
+      <li>Dépannage plomberie en urgence 24h/24</li>
+      <li>Recherche et réparation de fuites</li>
+      <li>Installation de chauffe-eau</li>
+      <li>Rénovation de salle de bain</li>
+      <li>Débouchage de canalisations</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Zones d’intervention</h2>
+    <p>
+      Paris 75, Hauts-de-Seine 92, Seine-Saint-Denis 93,
+      Val-de-Marne 94.
+    </p>
+  </section>
+
+  <section>
+    <h2>Tarifs</h2>
+    <p>
+      Déplacement : 49€<br>
+      Dépannage standard : à partir de 89€<br>
+      Urgence nuit / week-end : sur devis
+    </p>
+  </section>
+
+  <section>
+    <h2>Contact</h2>
+    <p>
+      📞 06 12 34 56 78<br>
+      📧 contact@plomberiemartin.fr
+    </p>
+  </section>
+
+  <!-- 🔥 WIDGET IA (TOUJOURS ICI, JUSTE AVANT </body>) -->
+  <script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js"></script>
+
+</body>
+</html>
