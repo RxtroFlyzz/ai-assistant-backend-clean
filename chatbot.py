@@ -15,6 +15,7 @@ from openai import OpenAI
 from database import SessionLocal, engine
 from models import Base, Conversation, Message as MessageModel
 
+
 # =========================
 # INIT
 # =========================
@@ -25,7 +26,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
-# CORS
+# CORS (widget sur tous les sites)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,6 +36,7 @@ app.add_middleware(
 )
 
 Base.metadata.create_all(bind=engine)
+
 
 # =========================
 # DB
@@ -47,6 +49,7 @@ def get_db():
     finally:
         db.close()
 
+
 # =========================
 # SCHEMA
 # =========================
@@ -56,19 +59,21 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     page_content: Optional[str] = None
 
+
 # =========================
 # REGEX
 # =========================
 
 HUMAN_REGEX = re.compile(
-    r"(assistant|humain|conseiller|agent|support|service client|personne|quelqu'un|contact)",
+    r"(assistant|humain|conseiller|agent|support|service client|contact|personne)",
     re.IGNORECASE
 )
 
 YES_REGEX = re.compile(
-    r"^(oui|ok|okay|d'accord|yes|yep|bien sûr|svp|oui svp)$",
+    r"^(oui|ok|okay|yes|yep|bien sûr|svp|oui svp)$",
     re.IGNORECASE
 )
+
 
 # =========================
 # TEXTES
@@ -84,11 +89,14 @@ HUMAN_CONFIRMED = (
     "Un assistant humain va vous recontacter très rapidement."
 )
 
+
 # =========================
 # EMAIL
 # =========================
 
 def send_human_email(conv_id: str, user_message: str):
+
+    print("📧 === EMAIL SYSTEM START ===")
 
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = os.getenv("SMTP_PORT")
@@ -97,7 +105,12 @@ def send_human_email(conv_id: str, user_message: str):
     smtp_from = os.getenv("SMTP_FROM")
     client_email = os.getenv("CLIENT_EMAIL")
 
-    # Vérification config
+    print("SMTP_HOST:", smtp_host)
+    print("SMTP_PORT:", smtp_port)
+    print("SMTP_USER:", smtp_user)
+    print("SMTP_FROM:", smtp_from)
+    print("CLIENT_EMAIL:", client_email)
+
     if not all([
         smtp_host,
         smtp_port,
@@ -128,15 +141,18 @@ Dernier message :
 Merci de le recontacter rapidement.
 """)
 
+        print("📡 Connexion SMTP...")
+
         with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
-        print("✅ EMAIL SENT")
+        print("✅ EMAIL SENT SUCCESSFULLY")
 
     except Exception as e:
-        print("❌ EMAIL ERROR:", e)
+        print("❌ EMAIL ERROR:", str(e))
+
 
 # =========================
 # ROUTE CHAT
@@ -147,6 +163,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     # ID conversation
     conv_id = msg.conversation_id or str(uuid.uuid4())
+
 
     # Conversation
     conversation = db.query(Conversation).filter(
@@ -161,7 +178,8 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         db.add(conversation)
         db.commit()
 
-    # Message user
+
+    # Message utilisateur
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
@@ -169,6 +187,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         content=msg.message
     ))
     db.commit()
+
 
     # =========================
     # CONFIRMATION HUMAIN
@@ -178,6 +197,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         MessageModel.conversation_id == conv_id,
         MessageModel.role == "assistant"
     ).order_by(MessageModel.created_at.desc()).first()
+
 
     if last_ai and "assistant humain" in last_ai.content.lower():
 
@@ -199,6 +219,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
                 "needs_human": True
             }
 
+
     # =========================
     # DEMANDE HUMAIN DIRECTE
     # =========================
@@ -219,6 +240,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "needs_human": True
         }
 
+
     # =========================
     # HISTORIQUE
     # =========================
@@ -228,6 +250,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ).order_by(MessageModel.created_at).all()
 
     messages_for_openai = []
+
 
     # =========================
     # CONTEXTE SITE
@@ -248,11 +271,13 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             )
         })
 
+
     for m in history:
         messages_for_openai.append({
             "role": m.role,
             "content": m.content
         })
+
 
     # =========================
     # OPENAI
@@ -265,6 +290,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     reply = response.choices[0].message.content
 
+
     # Save AI msg
     db.add(MessageModel(
         id=str(uuid.uuid4()),
@@ -273,6 +299,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         content=reply
     ))
     db.commit()
+
 
     return {
         "reply": reply,
