@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 import uuid
 import os
 import re
-import smtplib
-from email.message import EmailMessage
+import json
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -91,67 +92,54 @@ HUMAN_CONFIRMED = (
 
 
 # =========================
-# EMAIL
+# EMAIL (RESEND)
 # =========================
 
 def send_human_email(conv_id: str, user_message: str):
 
-    print("📧 === EMAIL SYSTEM START ===")
+    print("📧 === RESEND EMAIL START ===")
 
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = os.getenv("SMTP_PORT")
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-    smtp_from = os.getenv("SMTP_FROM")
+    resend_key = os.getenv("RESEND_API_KEY")
     client_email = os.getenv("CLIENT_EMAIL")
 
-    print("SMTP_HOST:", smtp_host)
-    print("SMTP_PORT:", smtp_port)
-    print("SMTP_USER:", smtp_user)
-    print("SMTP_FROM:", smtp_from)
-    print("CLIENT_EMAIL:", client_email)
+    print(f"RESEND_API_KEY present: {bool(resend_key)}")
+    print(f"CLIENT_EMAIL: {client_email}")
 
-    if not all([
-        smtp_host,
-        smtp_port,
-        smtp_user,
-        smtp_pass,
-        smtp_from,
-        client_email
-    ]):
-        print("❌ SMTP CONFIG INCOMPLETE")
+    if not resend_key or not client_email:
+        print("❌ RESEND CONFIG INCOMPLETE")
         return
 
     try:
-        msg = EmailMessage()
+        data = json.dumps({
+            "from": "AI Widget <onboarding@resend.dev>",
+            "to": [client_email],
+            "subject": "🔔 Nouveau client à rappeler",
+            "html": (
+                "<h2>Un visiteur souhaite parler à un humain</h2>"
+                f"<p><strong>Conversation ID :</strong> {conv_id}</p>"
+                f"<p><strong>Dernier message :</strong> {user_message}</p>"
+                "<p>Merci de le recontacter rapidement.</p>"
+            )
+        }).encode("utf-8")
 
-        msg["Subject"] = "📞 Nouveau client à rappeler"
-        msg["From"] = smtp_from
-        msg["To"] = client_email
+        req = Request(
+            "https://api.resend.com/emails",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
 
-        msg.set_content(f"""
-Un visiteur souhaite parler à un assistant humain.
+        response = urlopen(req)
+        result = json.loads(response.read().decode())
+        print(f"✅ EMAIL SENT via Resend! ID: {result.get('id', 'unknown')}")
 
-Conversation ID :
-{conv_id}
-
-Dernier message :
-{user_message}
-
-Merci de le recontacter rapidement.
-""")
-
-        print("📡 Connexion SMTP...")
-
-        with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.send_message(msg)
-
-        print("✅ EMAIL SENT SUCCESSFULLY")
-
+    except URLError as e:
+        print(f"❌ RESEND ERROR: {e}")
     except Exception as e:
-        print("❌ EMAIL ERROR:", str(e))
+        print(f"❌ RESEND UNEXPECTED ERROR: {e}")
 
 
 # =========================
