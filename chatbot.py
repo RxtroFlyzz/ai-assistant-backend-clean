@@ -69,6 +69,7 @@ def send_human_email(conv_id: str, user_message: str):
     resend_key = os.getenv("RESEND_API_KEY")
     client_email = os.getenv("CLIENT_EMAIL")
     print(f"RESEND_API_KEY present: {bool(resend_key)}")
+    print(f"RESEND_API_KEY value: {resend_key[:15]}...")
     print(f"CLIENT_EMAIL: {client_email}")
     if not resend_key or not client_email:
         print("❌ RESEND CONFIG INCOMPLETE")
@@ -99,6 +100,9 @@ def send_human_email(conv_id: str, user_message: str):
         print(f"✅ EMAIL SENT via Resend! ID: {result.get('id', 'unknown')}")
     except URLError as e:
         print(f"❌ RESEND ERROR: {e}")
+        if hasattr(e, 'read'):
+            error_body = e.read().decode()
+            print(f"❌ RESEND ERROR BODY: {error_body}")
     except Exception as e:
         print(f"❌ RESEND UNEXPECTED ERROR: {e}")
 
