@@ -43,6 +43,9 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     page_content: Optional[str] = None
 
+class ContactHumanRequest(BaseModel):
+    conversation_id: Optional[str] = None
+
 HUMAN_REGEX = re.compile(
     r"(assistant|humain|conseiller|agent|support|service client|contact|personne)",
     re.IGNORECASE
@@ -86,6 +89,24 @@ def send_human_email(conv_id: str, user_message: str):
         print(f"✅ EMAIL SENT! ID: {email['id']}")
     except Exception as e:
         print(f"❌ RESEND ERROR: {e}")
+
+@app.post("/contact-human")
+def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
+    conv_id = req.conversation_id or str(uuid.uuid4())
+    conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conversation:
+        conversation = Conversation(id=conv_id, title="Conversation client")
+        db.add(conversation)
+        db.commit()
+    send_human_email(conv_id, "Le visiteur a cliqué sur le bouton 'Parler à un humain'")
+    db.add(MessageModel(
+        id=str(uuid.uuid4()),
+        conversation_id=conv_id,
+        role="assistant",
+        content=HUMAN_CONFIRMED
+    ))
+    db.commit()
+    return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
 
 @app.post("/chat")
 def chat(msg: ChatRequest, db: Session = Depends(get_db)):
@@ -158,4 +179,3 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
-
