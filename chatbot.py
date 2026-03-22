@@ -6,9 +6,7 @@ from sqlalchemy.orm import Session
 import uuid
 import os
 import re
-import json
-from urllib.request import Request, urlopen
-from urllib.error import URLError
+import resend
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -19,6 +17,7 @@ from models import Base, Conversation, Message as MessageModel
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+resend.api_key = os.getenv("RESEND_API_KEY")
 
 app = FastAPI()
 
@@ -66,16 +65,13 @@ HUMAN_CONFIRMED = (
 
 def send_human_email(conv_id: str, user_message: str):
     print("📧 === RESEND EMAIL START ===")
-    resend_key = os.getenv("RESEND_API_KEY")
     client_email = os.getenv("CLIENT_EMAIL")
-    print(f"RESEND_API_KEY present: {bool(resend_key)}")
-    print(f"RESEND_API_KEY value: {resend_key[:15]}...")
     print(f"CLIENT_EMAIL: {client_email}")
-    if not resend_key or not client_email:
-        print("❌ RESEND CONFIG INCOMPLETE")
+    if not client_email:
+        print("❌ CLIENT_EMAIL MANQUANT")
         return
     try:
-        data = json.dumps({
+        params = {
             "from": "AI Widget <noreply@gianluca-ai.fr>",
             "to": [client_email],
             "subject": "🔔 Nouveau client à rappeler",
@@ -85,26 +81,11 @@ def send_human_email(conv_id: str, user_message: str):
                 f"<p><strong>Dernier message :</strong> {user_message}</p>"
                 "<p>Merci de le recontacter rapidement.</p>"
             )
-        }).encode("utf-8")
-        req = Request(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {resend_key}",
-                "Content-Type": "application/json"
-            },
-            method="POST"
-        )
-        response = urlopen(req)
-        result = json.loads(response.read().decode())
-        print(f"✅ EMAIL SENT via Resend! ID: {result.get('id', 'unknown')}")
-    except URLError as e:
-        print(f"❌ RESEND ERROR: {e}")
-        if hasattr(e, 'read'):
-            error_body = e.read().decode()
-            print(f"❌ RESEND ERROR BODY: {error_body}")
+        }
+        email = resend.Emails.send(params)
+        print(f"✅ EMAIL SENT! ID: {email['id']}")
     except Exception as e:
-        print(f"❌ RESEND UNEXPECTED ERROR: {e}")
+        print(f"❌ RESEND ERROR: {e}")
 
 @app.post("/chat")
 def chat(msg: ChatRequest, db: Session = Depends(get_db)):
@@ -177,3 +158,4 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
+
