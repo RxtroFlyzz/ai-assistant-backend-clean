@@ -151,10 +151,7 @@ def admin_page():
 </div>
 <script>
   let token = localStorage.getItem("admin_token") || "";
-
-  if (token) {
-    verifyAndShow();
-  }
+  if (token) { verifyAndShow(); }
 
   async function verifyAndShow() {
     const res = await fetch("/admin/login", {
@@ -250,7 +247,7 @@ def admin_conversations(request: Request, db: Session = Depends(get_db)):
     for conv in conversations:
         messages = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).all()
         needs_human = any(
-            "assistant humain" in m.content.lower() or "parler à un humain" in m.content.lower()
+            m.role == "assistant" and "un assistant humain va vous recontacter" in m.content.lower()
             for m in messages
         )
         result.append({
@@ -345,8 +342,9 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
                 f"{msg.page_content}\n\n"
                 "RÈGLES :\n"
                 "- Tu travailles uniquement pour ce site\n"
-                "- Tu n'inventes rien\n"
-                "- Si info absente → propose humain"
+                "- Tu réponds directement aux questions avec les infos disponibles\n"
+                "- Tu n'inventes JAMAIS d'informations qui ne sont pas dans le contenu\n"
+                "- Tu proposes un humain UNIQUEMENT si la question est totalement hors sujet ou si le visiteur le demande explicitement"
             )
         })
     for m in history:
