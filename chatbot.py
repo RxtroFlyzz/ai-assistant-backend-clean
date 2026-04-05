@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -19,6 +20,8 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 resend.api_key = os.getenv("RESEND_API_KEY")
+
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 app = FastAPI()
 
@@ -92,6 +95,167 @@ def send_human_email(conv_id: str, user_message: str):
         print(f"✅ EMAIL SENT! ID: {email['id']}")
     except Exception as e:
         print(f"❌ RESEND ERROR: {e}")
+
+
+# =========================
+# ADMIN
+# =========================
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page():
+    return HTMLResponse(content="""
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin - AI Widget</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f5f5f5; }
+    #login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+    #login input { padding: 10px; font-size: 16px; margin-bottom: 10px; width: 300px; border: 1px solid #ddd; border-radius: 6px; }
+    #login button { padding: 10px 20px; background: #000; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; width: 300px; }
+    #dashboard { display: none; padding: 20px; }
+    h1 { margin-bottom: 20px; }
+    .conv-list { display: flex; gap: 20px; }
+    .conv-sidebar { width: 340px; flex-shrink: 0; }
+    .conv-item { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
+    .conv-item:hover { border-color: #000; }
+    .conv-item.urgent { border-left: 4px solid #e74c3c; }
+    .conv-item .date { font-size: 12px; color: #999; margin-top: 4px; }
+    .conv-item .badge { background: #e74c3c; color: white; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+    .conv-detail { flex: 1; background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; min-height: 400px; }
+    .msg { margin-bottom: 12px; padding: 10px; border-radius: 6px; }
+    .msg.user { background: #f0f0f0; }
+    .msg.assistant { background: #e8f4fd; }
+    .msg .role { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+    #no-selection { color: #999; text-align: center; margin-top: 100px; }
+    .error { color: red; font-size: 14px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<div id="login">
+  <h2 style="margin-bottom:20px">🔐 Admin AI Widget</h2>
+  <input type="password" id="pwd" placeholder="Mot de passe" />
+  <button onclick="login()">Connexion</button>
+  <p class="error" id="error"></p>
+</div>
+
+<div id="dashboard">
+  <h1>📊 Dashboard Admin</h1>
+  <div class="conv-list">
+    <div class="conv-sidebar" id="conv-list"></div>
+    <div class="conv-detail" id="conv-detail">
+      <p id="no-selection">← Sélectionne une conversation</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  let token = "";
+
+  async function login() {
+    const pwd = document.getElementById("pwd").value;
+    const res = await fetch("/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pwd })
+    });
+    if (res.ok) {
+      token = pwd;
+      document.getElementById("login").style.display = "none";
+      document.getElementById("dashboard").style.display = "block";
+      loadConversations();
+    } else {
+      document.getElementById("error").innerText = "Mot de passe incorrect";
+    }
+  }
+
+  async function loadConversations() {
+    const res = await fetch("/admin/conversations", {
+      headers: { "X-Admin-Password": token }
+    });
+    const data = await res.json();
+    const list = document.getElementById("conv-list");
+    list.innerHTML = "";
+    data.forEach(conv => {
+      const div = document.createElement("div");
+      div.className = "conv-item" + (conv.needs_human ? " urgent" : "");
+      div.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>${conv.id.slice(0, 8)}...</strong>
+          ${conv.needs_human ? '<span class="badge">🔴 Humain</span>' : ''}
+        </div>
+        <div class="date">${conv.created_at} · ${conv.message_count} messages</div>
+      `;
+      div.onclick = () => loadConversation(conv.id);
+      list.appendChild(div);
+    });
+  }
+
+  async function loadConversation(id) {
+    const res = await fetch(`/admin/conversations/${id}`, {
+      headers: { "X-Admin-Password": token }
+    });
+    const data = await res.json();
+    const detail = document.getElementById("conv-detail");
+    detail.innerHTML = `<h3 style="margin-bottom:16px">Conversation ${id.slice(0,8)}...</h3>`;
+    data.forEach(msg => {
+      const div = document.createElement("div");
+      div.className = `msg ${msg.role}`;
+      div.innerHTML = `<div class="role">${msg.role === "user" ? "👤 Visiteur" : "🤖 IA"}</div>${msg.content}`;
+      detail.appendChild(div);
+    });
+  }
+
+  document.getElementById("pwd").addEventListener("keydown", e => {
+    if (e.key === "Enter") login();
+  });
+</script>
+</body>
+</html>
+""")
+
+@app.post("/admin/login")
+def admin_login(data: dict, request: Request):
+    if data.get("password") != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Mot de passe incorrect")
+    return {"ok": True}
+
+@app.get("/admin/conversations")
+def admin_conversations(request: Request, db: Session = Depends(get_db)):
+    if request.headers.get("X-Admin-Password") != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    conversations = db.query(Conversation).order_by(Conversation.created_at.desc()).all()
+    result = []
+    for conv in conversations:
+        messages = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).all()
+        needs_human = any(
+            "assistant humain" in m.content.lower() or "parler à un humain" in m.content.lower()
+            for m in messages
+        )
+        result.append({
+            "id": conv.id,
+            "created_at": str(conv.created_at)[:16] if conv.created_at else "—",
+            "message_count": len(messages),
+            "needs_human": needs_human
+        })
+    return result
+
+@app.get("/admin/conversations/{conv_id}")
+def admin_conversation_detail(conv_id: str, request: Request, db: Session = Depends(get_db)):
+    if request.headers.get("X-Admin-Password") != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    messages = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conv_id
+    ).order_by(MessageModel.created_at).all()
+    return [{"role": m.role, "content": m.content} for m in messages]
+
+
+# =========================
+# ROUTES CHAT
+# =========================
 
 @app.post("/contact-human")
 def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
