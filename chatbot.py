@@ -25,7 +25,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 app = FastAPI()
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -133,14 +132,12 @@ def admin_page():
   </style>
 </head>
 <body>
-
 <div id="login">
   <h2 style="margin-bottom:20px">🔐 Admin AI Widget</h2>
   <input type="password" id="pwd" placeholder="Mot de passe" />
   <button onclick="login()">Connexion</button>
   <p class="error" id="error"></p>
 </div>
-
 <div id="dashboard">
   <h1>📊 Dashboard Admin</h1>
   <div class="conv-list">
@@ -150,10 +147,8 @@ def admin_page():
     </div>
   </div>
 </div>
-
 <script>
   let token = "";
-
   async function login() {
     const pwd = document.getElementById("pwd").value;
     const res = await fetch("/admin/login", {
@@ -170,7 +165,6 @@ def admin_page():
       document.getElementById("error").innerText = "Mot de passe incorrect";
     }
   }
-
   async function loadConversations() {
     const res = await fetch("/admin/conversations", {
       headers: { "X-Admin-Password": token }
@@ -192,7 +186,6 @@ def admin_page():
       list.appendChild(div);
     });
   }
-
   async function loadConversation(id) {
     const res = await fetch(`/admin/conversations/${id}`, {
       headers: { "X-Admin-Password": token }
@@ -207,7 +200,6 @@ def admin_page():
       detail.appendChild(div);
     });
   }
-
   document.getElementById("pwd").addEventListener("keydown", e => {
     if (e.key === "Enter") login();
   });
@@ -345,7 +337,5 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
-
-return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
