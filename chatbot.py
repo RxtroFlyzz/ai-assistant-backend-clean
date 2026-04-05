@@ -129,6 +129,8 @@ def admin_page():
     .msg .role { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
     #no-selection { color: #999; text-align: center; margin-top: 100px; }
     .error { color: red; font-size: 14px; margin-top: 8px; }
+    #refresh-btn { margin-left: 20px; padding: 6px 14px; background: #fff; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    #refresh-btn:hover { background: #f0f0f0; }
   </style>
 </head>
 <body>
@@ -139,7 +141,7 @@ def admin_page():
   <p class="error" id="error"></p>
 </div>
 <div id="dashboard">
-  <h1>📊 Dashboard Admin</h1>
+  <h1>📊 Dashboard Admin <button id="refresh-btn" onclick="loadConversations()">🔄 Rafraîchir</button></h1>
   <div class="conv-list">
     <div class="conv-sidebar" id="conv-list"></div>
     <div class="conv-detail" id="conv-detail">
@@ -148,7 +150,28 @@ def admin_page():
   </div>
 </div>
 <script>
-  let token = "";
+  let token = localStorage.getItem("admin_token") || "";
+
+  if (token) {
+    verifyAndShow();
+  }
+
+  async function verifyAndShow() {
+    const res = await fetch("/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: token })
+    });
+    if (res.ok) {
+      document.getElementById("login").style.display = "none";
+      document.getElementById("dashboard").style.display = "block";
+      loadConversations();
+    } else {
+      token = "";
+      localStorage.removeItem("admin_token");
+    }
+  }
+
   async function login() {
     const pwd = document.getElementById("pwd").value;
     const res = await fetch("/admin/login", {
@@ -158,6 +181,7 @@ def admin_page():
     });
     if (res.ok) {
       token = pwd;
+      localStorage.setItem("admin_token", pwd);
       document.getElementById("login").style.display = "none";
       document.getElementById("dashboard").style.display = "block";
       loadConversations();
@@ -165,6 +189,7 @@ def admin_page():
       document.getElementById("error").innerText = "Mot de passe incorrect";
     }
   }
+
   async function loadConversations() {
     const res = await fetch("/admin/conversations", {
       headers: { "X-Admin-Password": token }
@@ -186,6 +211,7 @@ def admin_page():
       list.appendChild(div);
     });
   }
+
   async function loadConversation(id) {
     const res = await fetch(`/admin/conversations/${id}`, {
       headers: { "X-Admin-Password": token }
@@ -200,6 +226,7 @@ def admin_page():
       detail.appendChild(div);
     });
   }
+
   document.getElementById("pwd").addEventListener("keydown", e => {
     if (e.key === "Enter") login();
   });
