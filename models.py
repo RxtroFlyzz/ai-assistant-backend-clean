@@ -9,6 +9,7 @@ class Conversation(Base):
 
     id = Column(String, primary_key=True, index=True)
     title = Column(String, default="Nouvelle conversation")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     messages = relationship(
         "Message",
