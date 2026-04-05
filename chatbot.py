@@ -25,7 +25,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -346,3 +345,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
+
+return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
