@@ -327,7 +327,7 @@ function loadConv(id, el) {
       var div = document.createElement("div");
       div.className = "msg " + msg.role;
       var who = msg.role === "user" ? "Visiteur" : "Assistant IA";
-      var txt = msg.content.replace(/\n/g, "<br>");
+      var txt = msg.content.split("\n").join("<br>");
       div.innerHTML = "<div class='msg-who'>" + who + "</div><div class='msg-text'>" + txt + "</div>";
       wrap.appendChild(div);
     }
