@@ -56,19 +56,13 @@ HUMAN_REGEX = re.compile(
 )
 
 YES_REGEX = re.compile(
-    r"^(oui|ok|okay|yes|yep|bien sur|svp|oui svp)$",
+    r"^(oui|ok|okay|yes|yep|svp)$",
     re.IGNORECASE
 )
 
-HUMAN_PROPOSAL = (
-    "Ces informations ne sont pas disponibles.\n\n"
-    "Souhaitez-vous etre mis en relation avec un assistant humain ?"
-)
+HUMAN_PROPOSAL = "Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?"
 
-HUMAN_CONFIRMED = (
-    "Parfait\n\n"
-    "Un assistant humain va vous recontacter tres rapidement."
-)
+HUMAN_CONFIRMED = "Parfait. Un assistant humain va vous recontacter tres rapidement."
 
 def send_human_email(conv_id: str, user_message: str):
     print("EMAIL START")
@@ -103,7 +97,6 @@ ADMIN_HTML = """<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #0f1117; color: #e2e8f0; height: 100vh; overflow: hidden; }
-
     #login { display: flex; align-items: center; justify-content: center; height: 100vh; }
     .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 48px 40px; width: 380px; text-align: center; }
     .logo { width: 52px; height: 52px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 24px; }
@@ -116,7 +109,6 @@ ADMIN_HTML = """<!DOCTYPE html>
     .btn-login { width: 100%; padding: 13px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-login:hover { opacity: 0.9; }
     .err { color: #f87171; font-size: 13px; margin-top: 12px; padding: 10px; background: rgba(127,29,29,0.2); border: 1px solid #7f1d1d; border-radius: 8px; display: none; }
-
     #dashboard { display: none; height: 100vh; }
     .layout { display: flex; height: 100vh; }
     .sidebar { width: 280px; background: #1a1d27; border-right: 1px solid #2d3148; display: flex; flex-direction: column; }
@@ -145,7 +137,6 @@ ADMIN_HTML = """<!DOCTYPE html>
     .sb-bot { padding: 12px 16px; border-top: 1px solid #2d3148; }
     .btn-logout { width: 100%; padding: 8px; background: transparent; border: 1px solid #2d3148; border-radius: 8px; color: #64748b; font-size: 12px; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-logout:hover { border-color: #f87171; color: #f87171; }
-
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
     .main-hdr { padding: 20px 28px; border-bottom: 1px solid #2d3148; background: #1a1d27; }
     .main-hdr h2 { font-size: 15px; font-weight: 600; color: #f1f5f9; }
@@ -171,12 +162,12 @@ ADMIN_HTML = """<!DOCTYPE html>
 
 <div id="login">
   <div class="card">
-    <div class="logo">🤖</div>
+    <div class="logo">&#129302;</div>
     <h2>AI Widget Admin</h2>
     <p class="sub">Connectez-vous pour acceder au dashboard</p>
     <div class="pwd-row">
       <input type="password" id="pwd" placeholder="Mot de passe" />
-      <span class="eye" id="eyeBtn">👁</span>
+      <span class="eye" id="eyeBtn">&#128065;</span>
     </div>
     <button class="btn-login" id="loginBtn">Se connecter</button>
     <div class="err" id="errMsg">Mot de passe incorrect</div>
@@ -188,7 +179,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="sidebar">
       <div class="sb-top">
         <div class="brand">
-          <div class="brand-icon">🤖</div>
+          <div class="brand-icon">&#129302;</div>
           <span class="brand-name">AI Widget</span>
         </div>
         <div class="stats">
@@ -211,7 +202,7 @@ ADMIN_HTML = """<!DOCTYPE html>
       </div>
       <div class="msgs-area" id="msgsArea">
         <div class="empty">
-          <div class="empty-icon">💬</div>
+          <div class="empty-icon">&#128172;</div>
           <p>Selectionnez une conversation</p>
         </div>
       </div>
@@ -387,10 +378,6 @@ def admin_conversation_detail(conv_id: str, request: Request, db: Session = Depe
     ).order_by(MessageModel.created_at).all()
     return [{"role": m.role, "content": m.content} for m in messages]
 
-
-# =========================
-# ROUTES CHAT
-# =========================
 
 @app.post("/contact-human")
 def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
