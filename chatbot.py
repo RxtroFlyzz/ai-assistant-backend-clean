@@ -106,52 +106,447 @@ def admin_page():
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Admin - AI Widget</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Widget — Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; background: #f5f5f5; }
-    #login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-    #login input { padding: 10px; font-size: 16px; margin-bottom: 10px; width: 300px; border: 1px solid #ddd; border-radius: 6px; }
-    #login button { padding: 10px 20px; background: #000; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; width: 300px; }
-    #dashboard { display: none; padding: 20px; }
-    h1 { margin-bottom: 20px; }
-    .conv-list { display: flex; gap: 20px; }
-    .conv-sidebar { width: 340px; flex-shrink: 0; }
-    .conv-item { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
-    .conv-item:hover { border-color: #000; }
-    .conv-item.urgent { border-left: 4px solid #e74c3c; }
-    .conv-item .date { font-size: 12px; color: #999; margin-top: 4px; }
-    .conv-item .badge { background: #e74c3c; color: white; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
-    .conv-detail { flex: 1; background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; min-height: 400px; }
-    .msg { margin-bottom: 12px; padding: 10px; border-radius: 6px; }
-    .msg.user { background: #f0f0f0; }
-    .msg.assistant { background: #e8f4fd; }
-    .msg .role { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
-    #no-selection { color: #999; text-align: center; margin-top: 100px; }
-    .error { color: red; font-size: 14px; margin-top: 8px; }
-    #refresh-btn { margin-left: 20px; padding: 6px 14px; background: #fff; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px; }
-    #refresh-btn:hover { background: #f0f0f0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ===== LOGIN ===== */
+    #login {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: #0f1117;
+    }
+
+    .login-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 16px;
+      padding: 48px 40px;
+      width: 380px;
+      text-align: center;
+    }
+
+    .login-logo {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      font-size: 22px;
+    }
+
+    .login-card h2 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: 6px;
+    }
+
+    .login-card p {
+      font-size: 14px;
+      color: #64748b;
+      margin-bottom: 32px;
+    }
+
+    .login-card input {
+      width: 100%;
+      padding: 12px 16px;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      color: #f1f5f9;
+      font-size: 15px;
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .login-card input:focus {
+      border-color: #6366f1;
+    }
+
+    .login-card button {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .login-card button:hover { opacity: 0.9; }
+
+    .error-msg {
+      color: #f87171;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+
+    /* ===== DASHBOARD ===== */
+    #dashboard {
+      display: none;
+      height: 100vh;
+      flex-direction: row;
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+      width: 280px;
+      background: #1a1d27;
+      border-right: 1px solid #2d3148;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid #2d3148;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .brand-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .sidebar-stats {
+      display: flex;
+      gap: 8px;
+    }
+
+    .stat-pill {
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #94a3b8;
+      flex: 1;
+      text-align: center;
+    }
+
+    .stat-pill span {
+      display: block;
+      font-size: 16px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .sidebar-actions {
+      padding: 12px 16px;
+      border-bottom: 1px solid #2d3148;
+    }
+
+    .refresh-btn {
+      width: 100%;
+      padding: 8px 12px;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #94a3b8;
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .refresh-btn:hover {
+      border-color: #6366f1;
+      color: #6366f1;
+    }
+
+    .conv-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .conv-list::-webkit-scrollbar { width: 4px; }
+    .conv-list::-webkit-scrollbar-track { background: transparent; }
+    .conv-list::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 2px; }
+
+    .conv-item {
+      padding: 12px 14px;
+      border-radius: 10px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border: 1px solid transparent;
+    }
+
+    .conv-item:hover {
+      background: #0f1117;
+      border-color: #2d3148;
+    }
+
+    .conv-item.active {
+      background: #1e2035;
+      border-color: #6366f1;
+    }
+
+    .conv-item.urgent {
+      border-left: 3px solid #f87171;
+    }
+
+    .conv-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .conv-id {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e2e8f0;
+      font-family: 'Courier New', monospace;
+    }
+
+    .badge-human {
+      background: #7f1d1d;
+      color: #fca5a5;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 20px;
+      letter-spacing: 0.5px;
+    }
+
+    .conv-meta {
+      font-size: 11px;
+      color: #475569;
+      display: flex;
+      gap: 8px;
+    }
+
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #2d3148;
+    }
+
+    .logout-btn {
+      width: 100%;
+      padding: 8px;
+      background: transparent;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #64748b;
+      font-size: 12px;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .logout-btn:hover {
+      border-color: #f87171;
+      color: #f87171;
+    }
+
+    /* MAIN CONTENT */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .main-header {
+      padding: 20px 28px;
+      border-bottom: 1px solid #2d3148;
+      background: #1a1d27;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .main-header h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .main-header p {
+      font-size: 13px;
+      color: #475569;
+      margin-top: 2px;
+    }
+
+    .conv-detail {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px;
+    }
+
+    .conv-detail::-webkit-scrollbar { width: 4px; }
+    .conv-detail::-webkit-scrollbar-track { background: transparent; }
+    .conv-detail::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 2px; }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #334155;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .empty-state p {
+      font-size: 15px;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 16px;
+      max-width: 75%;
+    }
+
+    .msg.user { align-self: flex-end; margin-left: auto; }
+    .msg.assistant { align-self: flex-start; }
+
+    .msg-role {
+      font-size: 11px;
+      font-weight: 500;
+      color: #475569;
+      margin-bottom: 4px;
+      padding: 0 4px;
+    }
+
+    .msg.user .msg-role { text-align: right; }
+
+    .msg-bubble {
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .msg.user .msg-bubble {
+      background: #312e81;
+      color: #e0e7ff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.assistant .msg-bubble {
+      background: #1e2035;
+      color: #cbd5e1;
+      border: 1px solid #2d3148;
+      border-bottom-left-radius: 4px;
+    }
+
+    .messages-wrapper {
+      display: flex;
+      flex-direction: column;
+    }
   </style>
 </head>
 <body>
+
+<!-- LOGIN -->
 <div id="login">
-  <h2 style="margin-bottom:20px">🔐 Admin AI Widget</h2>
-  <input type="password" id="pwd" placeholder="Mot de passe" />
-  <button onclick="login()">Connexion</button>
-  <p class="error" id="error"></p>
+  <div class="login-card">
+    <div class="login-logo">🤖</div>
+    <h2>AI Widget Admin</h2>
+    <p>Connectez-vous pour accéder au dashboard</p>
+    <input type="password" id="pwd" placeholder="Mot de passe" />
+    <button onclick="login()">Se connecter</button>
+    <p class="error-msg" id="error"></p>
+  </div>
 </div>
+
+<!-- DASHBOARD -->
 <div id="dashboard">
-  <h1>📊 Dashboard Admin <button id="refresh-btn" onclick="loadConversations()">🔄 Rafraîchir</button></h1>
-  <div class="conv-list">
-    <div class="conv-sidebar" id="conv-list"></div>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <div class="brand-icon">🤖</div>
+        <span class="brand-name">AI Widget</span>
+      </div>
+      <div class="sidebar-stats">
+        <div class="stat-pill"><span id="total-count">—</span>Total</div>
+        <div class="stat-pill"><span id="urgent-count">—</span>Urgents</div>
+      </div>
+    </div>
+    <div class="sidebar-actions">
+      <button class="refresh-btn" onclick="loadConversations()">↻ Rafraîchir</button>
+    </div>
+    <div class="conv-list" id="conv-list"></div>
+    <div class="sidebar-footer">
+      <button class="logout-btn" onclick="logout()">Se déconnecter</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="main-header">
+      <div>
+        <h2 id="header-title">Conversations</h2>
+        <p id="header-sub">Sélectionnez une conversation pour voir les détails</p>
+      </div>
+    </div>
     <div class="conv-detail" id="conv-detail">
-      <p id="no-selection">← Sélectionne une conversation</p>
+      <div class="empty-state">
+        <div class="empty-state-icon">💬</div>
+        <p>Sélectionnez une conversation</p>
+      </div>
     </div>
   </div>
 </div>
+
 <script>
   let token = localStorage.getItem("admin_token") || "";
-  if (token) { verifyAndShow(); }
+  let activeId = null;
+
+  if (token) verifyAndShow();
 
   async function verifyAndShow() {
     const res = await fetch("/admin/login", {
@@ -159,14 +554,8 @@ def admin_page():
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: token })
     });
-    if (res.ok) {
-      document.getElementById("login").style.display = "none";
-      document.getElementById("dashboard").style.display = "block";
-      loadConversations();
-    } else {
-      token = "";
-      localStorage.removeItem("admin_token");
-    }
+    if (res.ok) showDashboard();
+    else { token = ""; localStorage.removeItem("admin_token"); }
   }
 
   async function login() {
@@ -179,12 +568,23 @@ def admin_page():
     if (res.ok) {
       token = pwd;
       localStorage.setItem("admin_token", pwd);
-      document.getElementById("login").style.display = "none";
-      document.getElementById("dashboard").style.display = "block";
-      loadConversations();
+      showDashboard();
     } else {
       document.getElementById("error").innerText = "Mot de passe incorrect";
     }
+  }
+
+  function showDashboard() {
+    document.getElementById("login").style.display = "none";
+    document.getElementById("dashboard").style.display = "flex";
+    loadConversations();
+  }
+
+  function logout() {
+    localStorage.removeItem("admin_token");
+    token = "";
+    document.getElementById("dashboard").style.display = "none";
+    document.getElementById("login").style.display = "flex";
   }
 
   async function loadConversations() {
@@ -194,34 +594,62 @@ def admin_page():
     const data = await res.json();
     const list = document.getElementById("conv-list");
     list.innerHTML = "";
+
+    const urgent = data.filter(c => c.needs_human).length;
+    document.getElementById("total-count").innerText = data.length;
+    document.getElementById("urgent-count").innerText = urgent;
+
+    if (data.length === 0) {
+      list.innerHTML = '<p style="color:#475569;font-size:13px;text-align:center;padding:20px">Aucune conversation</p>';
+      return;
+    }
+
     data.forEach(conv => {
       const div = document.createElement("div");
-      div.className = "conv-item" + (conv.needs_human ? " urgent" : "");
+      div.className = "conv-item" + (conv.needs_human ? " urgent" : "") + (conv.id === activeId ? " active" : "");
       div.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <strong>${conv.id.slice(0, 8)}...</strong>
-          ${conv.needs_human ? '<span class="badge">🔴 Humain</span>' : ''}
+        <div class="conv-item-header">
+          <span class="conv-id">#${conv.id.slice(0, 8)}</span>
+          ${conv.needs_human ? '<span class="badge-human">HUMAIN</span>' : ''}
         </div>
-        <div class="date">${conv.created_at} · ${conv.message_count} messages</div>
+        <div class="conv-meta">
+          <span>${conv.created_at}</span>
+          <span>·</span>
+          <span>${conv.message_count} messages</span>
+        </div>
       `;
-      div.onclick = () => loadConversation(conv.id);
+      div.onclick = () => loadConversation(conv.id, div);
       list.appendChild(div);
     });
   }
 
-  async function loadConversation(id) {
+  async function loadConversation(id, el) {
+    activeId = id;
+    document.querySelectorAll(".conv-item").forEach(i => i.classList.remove("active"));
+    if (el) el.classList.add("active");
+
+    document.getElementById("header-title").innerText = "Conversation #" + id.slice(0, 8);
+    document.getElementById("header-sub").innerText = "Historique complet de la conversation";
+
     const res = await fetch(`/admin/conversations/${id}`, {
       headers: { "X-Admin-Password": token }
     });
     const data = await res.json();
     const detail = document.getElementById("conv-detail");
-    detail.innerHTML = `<h3 style="margin-bottom:16px">Conversation ${id.slice(0,8)}...</h3>`;
+    detail.innerHTML = '<div class="messages-wrapper" id="msgs"></div>';
+    const wrapper = document.getElementById("msgs");
+
     data.forEach(msg => {
       const div = document.createElement("div");
       div.className = `msg ${msg.role}`;
-      div.innerHTML = `<div class="role">${msg.role === "user" ? "👤 Visiteur" : "🤖 IA"}</div>${msg.content}`;
-      detail.appendChild(div);
+      div.innerHTML = `
+        <div class="msg-role">${msg.role === "user" ? "👤 Visiteur" : "🤖 Assistant IA"}</div>
+        <div class="msg-bubble">${msg.content.replace(/\n/g, '<br>')}</div>
+      `;
+      wrapper.appendChild(div);
     });
+
+    detail.scrollTop = detail.scrollHeight;
   }
 
   document.getElementById("pwd").addEventListener("keydown", e => {
