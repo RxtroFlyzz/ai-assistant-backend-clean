@@ -14,14 +14,15 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from database import SessionLocal, engine
-from models import Base, Conversation, Message as MessageModel
+from models import Base, Client, Conversation, Message as MessageModel
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 resend.api_key = os.getenv("RESEND_API_KEY")
 
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+# Mot de passe super-admin pour creer des clients (toi uniquement)
+SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "superadmin123")
 
 app = FastAPI()
 
@@ -42,13 +43,27 @@ def get_db():
     finally:
         db.close()
 
+
+# ── Modeles Pydantic ──────────────────────────────────────────────────────────
+
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     page_content: Optional[str] = None
+    client_token: Optional[str] = None
 
 class ContactHumanRequest(BaseModel):
     conversation_id: Optional[str] = None
+    client_token: Optional[str] = None
+
+class CreateClientRequest(BaseModel):
+    business_name: str
+    admin_password: str
+    client_email: Optional[str] = None
+    superadmin_password: str
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 HUMAN_REGEX = re.compile(
     r"(assistant|humain|conseiller|agent|support|service client|contact|personne)",
@@ -61,21 +76,28 @@ YES_REGEX = re.compile(
 )
 
 HUMAN_PROPOSAL = "Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?"
-
 HUMAN_CONFIRMED = "Parfait. Un assistant humain va vous recontacter tres rapidement."
 
-def send_human_email(conv_id: str, user_message: str):
+
+def get_client_or_404(token: str, db: Session) -> Client:
+    c = db.query(Client).filter(Client.token == token).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Client introuvable")
+    return c
+
+
+def send_human_email(conv_id: str, user_message: str, client_obj: Client):
     print("EMAIL START")
-    client_email = os.getenv("CLIENT_EMAIL")
-    if not client_email:
+    if not client_obj.client_email:
         return
     try:
         params = {
             "from": "AI Widget <noreply@gianluca-ai.fr>",
-            "to": [client_email],
-            "subject": "Nouveau client a rappeler",
+            "to": [client_obj.client_email],
+            "subject": "Nouveau client a rappeler - " + client_obj.business_name,
             "html": (
                 "<h2>Un visiteur souhaite parler a un humain</h2>"
+                "<p><strong>Business :</strong> " + client_obj.business_name + "</p>"
                 "<p><strong>Conversation ID :</strong> " + conv_id + "</p>"
                 "<p><strong>Dernier message :</strong> " + user_message + "</p>"
                 "<p>Merci de le recontacter rapidement.</p>"
@@ -86,6 +108,42 @@ def send_human_email(conv_id: str, user_message: str):
     except Exception as e:
         print("EMAIL ERROR: " + str(e))
 
+
+# ── Super-admin : creer un client ─────────────────────────────────────────────
+
+@app.post("/superadmin/create-client")
+def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
+    if req.superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Non autorise")
+    token = req.business_name.lower().replace(" ", "_") + "_" + str(uuid.uuid4())[:6]
+    existing = db.query(Client).filter(Client.token == token).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Token deja existant")
+    new_client = Client(
+        token=token,
+        business_name=req.business_name,
+        admin_password=req.admin_password,
+        client_email=req.client_email
+    )
+    db.add(new_client)
+    db.commit()
+    return {
+        "token": token,
+        "business_name": req.business_name,
+        "admin_url": "/admin?token=" + token,
+        "widget_script": '<script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=' + token + '"></script>'
+    }
+
+
+@app.get("/superadmin/clients")
+def list_clients(superadmin_password: str, db: Session = Depends(get_db)):
+    if superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    clients = db.query(Client).all()
+    return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email} for c in clients]
+
+
+# ── Dashboard Admin (par token) ───────────────────────────────────────────────
 
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="fr">
@@ -120,7 +178,9 @@ ADMIN_HTML = """<!DOCTYPE html>
     .stat { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 8px 10px; flex: 1; text-align: center; }
     .stat-n { display: block; font-size: 18px; font-weight: 700; color: #f1f5f9; }
     .stat-l { font-size: 11px; color: #64748b; }
-    .sb-mid { padding: 12px 16px; border-bottom: 1px solid #2d3148; }
+    .sb-mid { padding: 12px 16px; border-bottom: 1px solid #2d3148; display: flex; flex-direction: column; gap: 8px; }
+    .search-input { width: 100%; padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #f1f5f9; font-size: 13px; font-family: 'Inter', sans-serif; outline: none; }
+    .search-input:focus { border-color: #6366f1; }
     .btn-refresh { width: 100%; padding: 9px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; font-size: 13px; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-refresh:hover { border-color: #6366f1; color: #6366f1; }
     .conv-list { flex: 1; overflow-y: auto; padding: 8px; }
@@ -180,7 +240,7 @@ ADMIN_HTML = """<!DOCTYPE html>
       <div class="sb-top">
         <div class="brand">
           <div class="brand-icon">&#129302;</div>
-          <span class="brand-name">AI Widget</span>
+          <span class="brand-name" id="businessName">AI Widget</span>
         </div>
         <div class="stats">
           <div class="stat"><span class="stat-n" id="totalN">0</span><span class="stat-l">Total</span></div>
@@ -188,6 +248,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
       </div>
       <div class="sb-mid">
+        <input class="search-input" id="searchInput" placeholder="&#128269; Rechercher une conversation..." />
         <button class="btn-refresh" id="refreshBtn">&#8635; Rafraichir</button>
       </div>
       <div class="conv-list" id="convList"></div>
@@ -212,9 +273,15 @@ ADMIN_HTML = """<!DOCTYPE html>
 
 <script>
 var token = localStorage.getItem("wt") || "";
+var clientToken = new URLSearchParams(window.location.search).get("token") || "";
 var activeId = null;
+var allConvs = [];
 
-if (token) { doVerify(); }
+if (!clientToken) {
+  document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif;font-size:16px'>Token manquant. Utilisez /admin?token=VOTRE_TOKEN</div>";
+}
+
+if (token && clientToken) { doVerify(); }
 
 document.getElementById("eyeBtn").addEventListener("click", function() {
   var inp = document.getElementById("pwd");
@@ -222,21 +289,23 @@ document.getElementById("eyeBtn").addEventListener("click", function() {
 });
 
 document.getElementById("loginBtn").addEventListener("click", doLogin);
-
 document.getElementById("pwd").addEventListener("keydown", function(e) {
   if (e.key === "Enter") { doLogin(); }
 });
-
 document.getElementById("refreshBtn").addEventListener("click", loadConvs);
 document.getElementById("logoutBtn").addEventListener("click", doLogout);
+document.getElementById("searchInput").addEventListener("input", function() {
+  renderConvList(filterConvs(this.value));
+});
 
 function doVerify() {
   fetch("/admin/login", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({password: token})
+    body: JSON.stringify({password: token, client_token: clientToken})
   }).then(function(r) {
-    if (r.ok) { showDash(); } else { token = ""; localStorage.removeItem("wt"); }
+    if (r.ok) { return r.json().then(function(d) { showDash(d.business_name); }); }
+    else { token = ""; localStorage.removeItem("wt"); }
   });
 }
 
@@ -247,24 +316,25 @@ function doLogin() {
   fetch("/admin/login", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({password: pwd})
+    body: JSON.stringify({password: pwd, client_token: clientToken})
   }).then(function(r) {
     if (r.ok) {
-      token = pwd;
-      localStorage.setItem("wt", pwd);
-      showDash();
-    } else {
-      err.style.display = "block";
-    }
+      return r.json().then(function(d) {
+        token = pwd;
+        localStorage.setItem("wt", pwd);
+        showDash(d.business_name);
+      });
+    } else { err.style.display = "block"; }
   }).catch(function() {
     err.style.display = "block";
     document.getElementById("errMsg").innerText = "Erreur reseau";
   });
 }
 
-function showDash() {
+function showDash(businessName) {
   document.getElementById("login").style.display = "none";
   document.getElementById("dashboard").style.display = "block";
+  if (businessName) document.getElementById("businessName").innerText = businessName;
   loadConvs();
 }
 
@@ -277,36 +347,49 @@ function doLogout() {
 }
 
 function loadConvs() {
-  fetch("/admin/conversations", {
+  fetch("/admin/conversations?client_token=" + clientToken, {
     headers: {"X-Admin-Password": token}
   }).then(function(r) { return r.json(); }).then(function(data) {
-    var list = document.getElementById("convList");
-    list.innerHTML = "";
-    var urgent = 0;
-    for (var i = 0; i < data.length; i++) {
-      if (data[i].needs_human) urgent++;
-    }
-    document.getElementById("totalN").innerText = data.length;
-    document.getElementById("urgentN").innerText = urgent;
-    if (data.length === 0) {
-      list.innerHTML = "<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";
-      return;
-    }
-    for (var j = 0; j < data.length; j++) {
-      (function(conv) {
-        var div = document.createElement("div");
-        var cls = "ci";
-        if (conv.needs_human) cls += " urgent";
-        if (conv.id === activeId) cls += " active";
-        div.className = cls;
-        div.innerHTML = "<div class='ci-top'><span class='ci-id'>#" + conv.id.slice(0,8) + "</span>" +
-          (conv.needs_human ? "<span class='badge'>HUMAIN</span>" : "") + "</div>" +
-          "<div class='ci-meta'>" + conv.created_at + " &middot; " + conv.message_count + " msg</div>";
-        div.addEventListener("click", function() { loadConv(conv.id, div); });
-        list.appendChild(div);
-      })(data[j]);
-    }
+    allConvs = data;
+    renderConvList(data);
   });
+}
+
+function filterConvs(query) {
+  if (!query) return allConvs;
+  var q = query.toLowerCase();
+  return allConvs.filter(function(c) {
+    return c.id.toLowerCase().includes(q) || (c.created_at && c.created_at.toLowerCase().includes(q));
+  });
+}
+
+function renderConvList(data) {
+  var list = document.getElementById("convList");
+  list.innerHTML = "";
+  var urgent = 0;
+  for (var i = 0; i < allConvs.length; i++) {
+    if (allConvs[i].needs_human) urgent++;
+  }
+  document.getElementById("totalN").innerText = allConvs.length;
+  document.getElementById("urgentN").innerText = urgent;
+  if (data.length === 0) {
+    list.innerHTML = "<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";
+    return;
+  }
+  for (var j = 0; j < data.length; j++) {
+    (function(conv) {
+      var div = document.createElement("div");
+      var cls = "ci";
+      if (conv.needs_human) cls += " urgent";
+      if (conv.id === activeId) cls += " active";
+      div.className = cls;
+      div.innerHTML = "<div class='ci-top'><span class='ci-id'>#" + conv.id.slice(0,8) + "</span>" +
+        (conv.needs_human ? "<span class='badge'>HUMAIN</span>" : "") + "</div>" +
+        "<div class='ci-meta'>" + conv.created_at + " &middot; " + conv.message_count + " msg</div>";
+      div.addEventListener("click", function() { loadConv(conv.id, div); });
+      list.appendChild(div);
+    })(data[j]);
+  }
 }
 
 function loadConv(id, el) {
@@ -316,7 +399,7 @@ function loadConv(id, el) {
   if (el) el.classList.add("active");
   document.getElementById("hdrTitle").innerText = "Conversation #" + id.slice(0,8);
   document.getElementById("hdrSub").innerText = "Historique complet";
-  fetch("/admin/conversations/" + id, {
+  fetch("/admin/conversations/" + id + "?client_token=" + clientToken, {
     headers: {"X-Admin-Password": token}
   }).then(function(r) { return r.json(); }).then(function(data) {
     var area = document.getElementById("msgsArea");
@@ -344,16 +427,23 @@ def admin_page():
     return HTMLResponse(content=ADMIN_HTML)
 
 @app.post("/admin/login")
-def admin_login(data: dict, request: Request):
-    if data.get("password") != ADMIN_PASSWORD:
+def admin_login(data: dict, db: Session = Depends(get_db)):
+    client_token = data.get("client_token", "")
+    password = data.get("password", "")
+    c = db.query(Client).filter(Client.token == client_token).first()
+    if not c or c.admin_password != password:
         raise HTTPException(status_code=401, detail="Mot de passe incorrect")
-    return {"ok": True}
+    return {"ok": True, "business_name": c.business_name}
 
 @app.get("/admin/conversations")
-def admin_conversations(request: Request, db: Session = Depends(get_db)):
-    if request.headers.get("X-Admin-Password") != ADMIN_PASSWORD:
+def admin_conversations(client_token: str, request: Request, db: Session = Depends(get_db)):
+    password = request.headers.get("X-Admin-Password", "")
+    c = db.query(Client).filter(Client.token == client_token).first()
+    if not c or c.admin_password != password:
         raise HTTPException(status_code=401)
-    conversations = db.query(Conversation).order_by(Conversation.created_at.desc()).all()
+    conversations = db.query(Conversation).filter(
+        Conversation.client_token == client_token
+    ).order_by(Conversation.created_at.desc()).all()
     result = []
     for conv in conversations:
         messages = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).all()
@@ -370,9 +460,18 @@ def admin_conversations(request: Request, db: Session = Depends(get_db)):
     return result
 
 @app.get("/admin/conversations/{conv_id}")
-def admin_conversation_detail(conv_id: str, request: Request, db: Session = Depends(get_db)):
-    if request.headers.get("X-Admin-Password") != ADMIN_PASSWORD:
+def admin_conversation_detail(conv_id: str, client_token: str, request: Request, db: Session = Depends(get_db)):
+    password = request.headers.get("X-Admin-Password", "")
+    c = db.query(Client).filter(Client.token == client_token).first()
+    if not c or c.admin_password != password:
         raise HTTPException(status_code=401)
+    # Verifier que la conversation appartient bien a ce client
+    conv = db.query(Conversation).filter(
+        Conversation.id == conv_id,
+        Conversation.client_token == client_token
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404)
     messages = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
@@ -382,12 +481,15 @@ def admin_conversation_detail(conv_id: str, request: Request, db: Session = Depe
 @app.post("/contact-human")
 def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
     conv_id = req.conversation_id or str(uuid.uuid4())
+    client_token = req.client_token or ""
+    c = db.query(Client).filter(Client.token == client_token).first()
     conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
     if not conversation:
-        conversation = Conversation(id=conv_id, title="Conversation client")
+        conversation = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
         db.add(conversation)
         db.commit()
-    send_human_email(conv_id, "Le visiteur a clique sur le bouton Parler a un humain")
+    if c:
+        send_human_email(conv_id, "Le visiteur a clique sur le bouton Parler a un humain", c)
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
@@ -397,14 +499,19 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
     db.commit()
     return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
 
+
 @app.post("/chat")
 def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     conv_id = msg.conversation_id or str(uuid.uuid4())
+    client_token = msg.client_token or ""
+    c = db.query(Client).filter(Client.token == client_token).first()
+
     conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
     if not conversation:
-        conversation = Conversation(id=conv_id, title="Conversation client")
+        conversation = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
         db.add(conversation)
         db.commit()
+
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
@@ -412,13 +519,16 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         content=msg.message
     ))
     db.commit()
+
     last_ai = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id,
         MessageModel.role == "assistant"
     ).order_by(MessageModel.created_at.desc()).first()
+
     if last_ai and "assistant humain" in last_ai.content.lower():
         if YES_REGEX.match(msg.message.strip().lower()):
-            send_human_email(conv_id, msg.message)
+            if c:
+                send_human_email(conv_id, msg.message, c)
             db.add(MessageModel(
                 id=str(uuid.uuid4()),
                 conversation_id=conv_id,
@@ -427,6 +537,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             ))
             db.commit()
             return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
+
     if HUMAN_REGEX.search(msg.message):
         db.add(MessageModel(
             id=str(uuid.uuid4()),
@@ -436,9 +547,11 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         ))
         db.commit()
         return {"reply": HUMAN_PROPOSAL, "conversation_id": conv_id, "needs_human": True}
+
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
+
     messages_for_openai = []
     if msg.page_content:
         messages_for_openai.append({
@@ -456,6 +569,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         })
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
+
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=messages_for_openai
@@ -469,5 +583,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
+
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
