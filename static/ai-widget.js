@@ -6,8 +6,8 @@
   })();
   var scriptSrc = scriptTag ? scriptTag.getAttribute("src") : "";
   var urlParams = new URLSearchParams(scriptSrc.split("?")[1] || "");
-  var CLIENT_TOKEN = urlParams.get("token") || "";
-
+  var CLIENT_TOKEN = (typeof WIDGET_TOKEN !== "undefined" ? WIDGET_TOKEN : "") || urlParams.get("token") || "";
+  
   var BASE_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
   var API_URL = BASE_URL + "/chat";
   var CONTACT_URL = BASE_URL + "/contact-human";
