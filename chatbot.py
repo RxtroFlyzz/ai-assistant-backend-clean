@@ -555,18 +555,19 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     messages_for_openai = []
     if msg.page_content:
         messages_for_openai.append({
-            "role": "system",
-            "content": (
-                "Tu es l'assistant officiel du site web.\n\n"
-                "CONTENU DU SITE :\n"
-                + msg.page_content +
-                "\n\nREGLES :\n"
-                "- Tu travailles uniquement pour ce site\n"
-                "- Tu reponds directement aux questions avec les infos disponibles\n"
-                "- Tu n'inventes JAMAIS d'informations qui ne sont pas dans le contenu\n"
-                "- Tu proposes un humain UNIQUEMENT si la question est totalement hors sujet ou si le visiteur le demande explicitement"
-            )
-        })
+            {"role": "system",
+ "content": (
+     "Tu es l'assistant officiel du site web.\n\n"
+     "CONTENU DU SITE :\n"
+     + msg.page_content +
+     "\n\nREGLES :\n"
+     "- Tu travailles uniquement pour ce site\n"
+     "- Tu reponds directement aux questions avec les infos disponibles\n"
+     "- Tu n'inventes JAMAIS d'informations qui ne sont pas dans le contenu\n"
+     "- Si tu ne peux pas repondre ou si le visiteur demande un humain, "
+     "utilise EXACTEMENT cette phrase : "
+     "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
+ )}
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
 
