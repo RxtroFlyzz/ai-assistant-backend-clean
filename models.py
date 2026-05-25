@@ -11,6 +11,7 @@ class Client(Base):
     business_name = Column(String, default="Mon Business")
     admin_password = Column(String, nullable=False)
     client_email = Column(String, nullable=True)
+    system_prompt = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
  
     conversations = relationship(
