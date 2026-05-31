@@ -62,6 +62,15 @@ class CreateClientRequest(BaseModel):
     client_email: Optional[str] = None
     superadmin_password: str
 
+# Mise a jour d'un client existant
+class UpdateClientRequest(BaseModel):
+    token: str
+    superadmin_password: str
+    system_prompt: Optional[str] = None
+    business_name: Optional[str] = None
+    admin_password: Optional[str] = None
+    client_email: Optional[str] = None
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,7 +80,7 @@ HUMAN_REGEX = re.compile(
 )
 
 YES_REGEX = re.compile(
-    r"^(oui|ok|okay|yes|yep|svp)$",
+    r"^(oui|ok|okay|yes|yep|svp|oui svp|oui merci|yes please|d accord|ok merci|bien sur|avec plaisir)$",
     re.IGNORECASE
 )
 
@@ -133,6 +142,25 @@ def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
         "admin_url": "/admin?token=" + token,
         "widget_script": '<script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=' + token + '"></script>'
     }
+
+
+@app.post("/superadmin/update-client")
+def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
+    if req.superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Non autorise")
+    c = db.query(Client).filter(Client.token == req.token).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Client introuvable")
+    if req.system_prompt is not None:
+        c.system_prompt = req.system_prompt
+    if req.business_name is not None:
+        c.business_name = req.business_name
+    if req.admin_password is not None:
+        c.admin_password = req.admin_password
+    if req.client_email is not None:
+        c.client_email = req.client_email
+    db.commit()
+    return {"ok": True, "token": c.token, "business_name": c.business_name}
 
 
 @app.get("/superadmin/clients")
@@ -554,7 +582,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     messages_for_openai = []
 
-    # Construire le system prompt : base = system_prompt du client, enrichi par page_content si dispo
+    # Base = system_prompt du client, enrichi par page_content si dispo
     if c and c.system_prompt:
         base_prompt = c.system_prompt
     else:
