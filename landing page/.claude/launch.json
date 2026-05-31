@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "replai",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../replai-landing", "run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}
