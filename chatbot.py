@@ -75,7 +75,7 @@ class UpdateClientRequest(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 HUMAN_REGEX = re.compile(
-    r"(assistant|humain|conseiller|agent|support|service client|contact|personne)",
+    r"(assistant|humain|conseiller|agent|support|service client|contact|personne|rendez.?vous|rdv|rappeler|rappel|prendre contact)",
     re.IGNORECASE
 )
 
@@ -553,7 +553,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         MessageModel.role == "assistant"
     ).order_by(MessageModel.created_at.desc()).first()
 
-    if last_ai and "assistant humain" in last_ai.content.lower():
+    if last_ai and ("assistant humain" in last_ai.content.lower() or "mis en relation" in last_ai.content.lower() or "parler" in last_ai.content.lower() or "conseiller" in last_ai.content.lower()):
         if YES_REGEX.match(msg.message.strip().lower()):
             if c:
                 send_human_email(conv_id, msg.message, c)
