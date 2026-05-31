@@ -62,15 +62,6 @@ class CreateClientRequest(BaseModel):
     client_email: Optional[str] = None
     superadmin_password: str
 
-# NOUVEAU : mise a jour d'un client existant
-class UpdateClientRequest(BaseModel):
-    token: str
-    superadmin_password: str
-    system_prompt: Optional[str] = None
-    business_name: Optional[str] = None
-    admin_password: Optional[str] = None
-    client_email: Optional[str] = None
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -142,26 +133,6 @@ def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
         "admin_url": "/admin?token=" + token,
         "widget_script": '<script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=' + token + '"></script>'
     }
-
-
-# NOUVEAU : mettre a jour un client existant
-@app.post("/superadmin/update-client")
-def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
-    if req.superadmin_password != SUPERADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Non autorise")
-    c = db.query(Client).filter(Client.token == req.token).first()
-    if not c:
-        raise HTTPException(status_code=404, detail="Client introuvable")
-    if req.system_prompt is not None:
-        c.system_prompt = req.system_prompt
-    if req.business_name is not None:
-        c.business_name = req.business_name
-    if req.admin_password is not None:
-        c.admin_password = req.admin_password
-    if req.client_email is not None:
-        c.client_email = req.client_email
-    db.commit()
-    return {"ok": True, "token": c.token, "business_name": c.business_name}
 
 
 @app.get("/superadmin/clients")
@@ -583,48 +554,24 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     messages_for_openai = []
 
-    # Priorite 1 : page_content (scraping temps reel du site client)
-    # Priorite 2 : system_prompt stocke en base pour ce client
-    # Priorite 3 : prompt generique sans contexte
-    if msg.page_content:
-        messages_for_openai.append({
-            "role": "system",
-            "content": (
-                "Tu es l'assistant officiel du site web.\n\n"
-                "CONTENU DU SITE :\n"
-                + msg.page_content +
-                "\n\nREGLES :\n"
-                "- Tu travailles uniquement pour ce site\n"
-                "- Tu reponds directement aux questions avec les infos disponibles\n"
-                "- Tu n'inventes JAMAIS d'informations qui ne sont pas dans le contenu\n"
-                "- Reponds dans la meme langue que le visiteur\n"
-                "- Si tu ne peux pas repondre ou si le visiteur demande un humain, "
-                "utilise EXACTEMENT cette phrase : "
-                "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
-            )
-        })
-    elif c and c.system_prompt:
-        messages_for_openai.append({
-            "role": "system",
-            "content": (
-                c.system_prompt +
-                "\n\nREGLES :\n"
-                "- Reponds dans la meme langue que le visiteur\n"
-                "- Si tu ne peux pas repondre, utilise EXACTEMENT cette phrase : "
-                "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
-            )
-        })
+    # Construire le system prompt : base = system_prompt du client, enrichi par page_content si dispo
+    if c and c.system_prompt:
+        base_prompt = c.system_prompt
     else:
-        messages_for_openai.append({
-            "role": "system",
-            "content": (
-                "Tu es un assistant virtuel professionnel. "
-                "Reponds dans la meme langue que le visiteur. "
-                "Si tu ne peux pas repondre, utilise EXACTEMENT cette phrase : "
-                "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
-            )
-        })
+        base_prompt = "Tu es un assistant virtuel professionnel."
 
+    if msg.page_content:
+        base_prompt += "\n\nCONTENU SUPPLEMENTAIRE DU SITE :\n" + msg.page_content
+
+    base_prompt += (
+        "\n\nREGLES :\n"
+        "- Reponds dans la meme langue que le visiteur\n"
+        "- Si le visiteur est irrespectueux ou pose des questions hors sujet, reponds poliment que tu es uniquement disponible pour les questions liees a ton activite\n"
+        "- Si tu ne peux pas repondre, utilise EXACTEMENT cette phrase : "
+        "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
+    )
+
+    messages_for_openai.append({"role": "system", "content": base_prompt})
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
 
