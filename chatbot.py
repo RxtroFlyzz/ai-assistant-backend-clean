@@ -21,7 +21,6 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 resend.api_key = os.getenv("RESEND_API_KEY")
 
-# Mot de passe super-admin pour creer des clients (toi uniquement)
 SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "superadmin123")
 
 app = FastAPI()
@@ -62,7 +61,6 @@ class CreateClientRequest(BaseModel):
     client_email: Optional[str] = None
     superadmin_password: str
 
-# Mise a jour d'un client existant
 class UpdateClientRequest(BaseModel):
     token: str
     superadmin_password: str
@@ -85,7 +83,8 @@ YES_REGEX = re.compile(
 )
 
 HUMAN_PROPOSAL = "Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?"
-HUMAN_CONFIRMED = "Parfait. Un assistant humain va vous recontacter tres rapidement."
+ASKING_CONTACT = "Parfait ! Pour que notre equipe vous contacte rapidement, pouvez-vous me donner votre prenom et votre numero de telephone ?"
+HUMAN_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A tout de suite !"
 
 
 def get_client_or_404(token: str, db: Session) -> Client:
@@ -95,7 +94,7 @@ def get_client_or_404(token: str, db: Session) -> Client:
     return c
 
 
-def send_human_email(conv_id: str, user_message: str, client_obj: Client):
+def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
     print("EMAIL START")
     if not client_obj.client_email:
         return
@@ -105,11 +104,13 @@ def send_human_email(conv_id: str, user_message: str, client_obj: Client):
             "to": [client_obj.client_email],
             "subject": "Nouveau client a rappeler - " + client_obj.business_name,
             "html": (
-                "<h2>Un visiteur souhaite parler a un humain</h2>"
+                "<h2>Un visiteur souhaite etre rappele</h2>"
                 "<p><strong>Business :</strong> " + client_obj.business_name + "</p>"
                 "<p><strong>Conversation ID :</strong> " + conv_id + "</p>"
-                "<p><strong>Dernier message :</strong> " + user_message + "</p>"
+                "<p><strong>Coordonnees du visiteur :</strong> <span style='color:#4f8eff;font-weight:bold'>" + contact_info + "</span></p>"
                 "<p>Merci de le recontacter rapidement.</p>"
+                "<hr>"
+                "<p style='color:#888;font-size:12px'>Replai — AI Widget</p>"
             )
         }
         email = resend.Emails.send(params)
@@ -118,7 +119,7 @@ def send_human_email(conv_id: str, user_message: str, client_obj: Client):
         print("EMAIL ERROR: " + str(e))
 
 
-# ── Super-admin : creer un client ─────────────────────────────────────────────
+# ── Super-admin ───────────────────────────────────────────────────────────────
 
 @app.post("/superadmin/create-client")
 def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
@@ -171,7 +172,7 @@ def list_clients(superadmin_password: str, db: Session = Depends(get_db)):
     return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email} for c in clients]
 
 
-# ── Dashboard Admin (par token) ───────────────────────────────────────────────
+# ── Dashboard Admin ───────────────────────────────────────────────────────────
 
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="fr">
@@ -244,6 +245,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     .msg-text { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
     .msg.user .msg-text { background: #312e81; color: #e0e7ff; border-bottom-right-radius: 3px; }
     .msg.assistant .msg-text { background: #1e2035; color: #cbd5e1; border: 1px solid #2d3148; border-bottom-left-radius: 3px; }
+    .contact-info { background: rgba(79,142,255,0.1); border: 1px solid rgba(79,142,255,0.3); border-radius: 8px; padding: 8px 12px; margin-top: 6px; font-size: 12px; color: #4f8eff; }
   </style>
 </head>
 <body>
@@ -411,9 +413,11 @@ function renderConvList(data) {
       if (conv.needs_human) cls += " urgent";
       if (conv.id === activeId) cls += " active";
       div.className = cls;
+      var contactBadge = conv.contact_info ? "<div class='contact-info'>📞 " + conv.contact_info + "</div>" : "";
       div.innerHTML = "<div class='ci-top'><span class='ci-id'>#" + conv.id.slice(0,8) + "</span>" +
         (conv.needs_human ? "<span class='badge'>HUMAIN</span>" : "") + "</div>" +
-        "<div class='ci-meta'>" + conv.created_at + " &middot; " + conv.message_count + " msg</div>";
+        "<div class='ci-meta'>" + conv.created_at + " &middot; " + conv.message_count + " msg</div>" +
+        contactBadge;
       div.addEventListener("click", function() { loadConv(conv.id, div); });
       list.appendChild(div);
     })(data[j]);
@@ -476,14 +480,22 @@ def admin_conversations(client_token: str, request: Request, db: Session = Depen
     for conv in conversations:
         messages = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).all()
         needs_human = any(
-            m.role == "assistant" and "assistant humain va vous recontacter" in m.content.lower()
+            m.role == "assistant" and "notre equipe va vous contacter" in m.content.lower()
             for m in messages
         )
+        # Cherche les coordonnees du visiteur dans les messages
+        contact_info = None
+        for i, m in enumerate(messages):
+            if m.role == "assistant" and "prenom et votre numero" in m.content.lower():
+                if i + 1 < len(messages) and messages[i + 1].role == "user":
+                    contact_info = messages[i + 1].content
+                    break
         result.append({
             "id": conv.id,
             "created_at": str(conv.created_at)[:16] if conv.created_at else "--",
             "message_count": len(messages),
-            "needs_human": needs_human
+            "needs_human": needs_human,
+            "contact_info": contact_info
         })
     return result
 
@@ -493,7 +505,6 @@ def admin_conversation_detail(conv_id: str, client_token: str, request: Request,
     c = db.query(Client).filter(Client.token == client_token).first()
     if not c or c.admin_password != password:
         raise HTTPException(status_code=401)
-    # Verifier que la conversation appartient bien a ce client
     conv = db.query(Conversation).filter(
         Conversation.id == conv_id,
         Conversation.client_token == client_token
@@ -516,16 +527,15 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
         conversation = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
         db.add(conversation)
         db.commit()
-    if c:
-        send_human_email(conv_id, "Le visiteur a clique sur le bouton Parler a un humain", c)
+    # Via le bouton "Parler a un humain" : on demande les coordonnees
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv_id,
         role="assistant",
-        content=HUMAN_CONFIRMED
+        content=ASKING_CONTACT
     ))
     db.commit()
-    return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
+    return {"reply": ASKING_CONTACT, "conversation_id": conv_id, "needs_human": False}
 
 
 @app.post("/chat")
@@ -553,19 +563,36 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         MessageModel.role == "assistant"
     ).order_by(MessageModel.created_at.desc()).first()
 
-    if last_ai and ("assistant humain" in last_ai.content.lower() or "mis en relation" in last_ai.content.lower() or "parler" in last_ai.content.lower() or "conseiller" in last_ai.content.lower()):
+    # ETAPE 3 : Le visiteur vient de donner ses coordonnees
+    if last_ai and "prenom et votre numero" in last_ai.content.lower():
+        contact_info = msg.message
+        if c:
+            send_human_email(conv_id, contact_info, c)
+        db.add(MessageModel(
+            id=str(uuid.uuid4()),
+            conversation_id=conv_id,
+            role="assistant",
+            content=HUMAN_CONFIRMED
+        ))
+        db.commit()
+        return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
+
+    # ETAPE 2 : Le visiteur dit oui → on demande ses coordonnees
+    if last_ai and ("assistant humain" in last_ai.content.lower() or
+                    "mis en relation" in last_ai.content.lower() or
+                    "parler" in last_ai.content.lower() or
+                    "conseiller" in last_ai.content.lower()):
         if YES_REGEX.match(msg.message.strip().lower()):
-            if c:
-                send_human_email(conv_id, msg.message, c)
             db.add(MessageModel(
                 id=str(uuid.uuid4()),
                 conversation_id=conv_id,
                 role="assistant",
-                content=HUMAN_CONFIRMED
+                content=ASKING_CONTACT
             ))
             db.commit()
-            return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
+            return {"reply": ASKING_CONTACT, "conversation_id": conv_id, "needs_human": False}
 
+    # ETAPE 1 : Detection demande humain → proposition
     if HUMAN_REGEX.search(msg.message):
         db.add(MessageModel(
             id=str(uuid.uuid4()),
@@ -574,7 +601,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             content=HUMAN_PROPOSAL
         ))
         db.commit()
-        return {"reply": HUMAN_PROPOSAL, "conversation_id": conv_id, "needs_human": True}
+        return {"reply": HUMAN_PROPOSAL, "conversation_id": conv_id, "needs_human": False}
 
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
@@ -582,7 +609,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     messages_for_openai = []
 
-    # Base = system_prompt du client, enrichi par page_content si dispo
     if c and c.system_prompt:
         base_prompt = c.system_prompt
     else:
