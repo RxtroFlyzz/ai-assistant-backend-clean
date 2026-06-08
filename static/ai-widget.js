@@ -1,13 +1,19 @@
 (function () {
-  // Lire le token depuis l'attribut src du script tag
-  var scriptTag = document.currentScript || (function() {
-    var scripts = document.getElementsByTagName("script");
-    return scripts[scripts.length - 1];
-  })();
-  var scriptSrc = scriptTag ? scriptTag.getAttribute("src") : "";
-  var urlParams = new URLSearchParams(scriptSrc.split("?")[1] || "");
-  var CLIENT_TOKEN = (typeof WIDGET_TOKEN !== "undefined" ? WIDGET_TOKEN : "") || urlParams.get("token") || "";
-  
+  var CLIENT_TOKEN = (typeof window.WIDGET_TOKEN !== "undefined" ? window.WIDGET_TOKEN : "");
+
+  if (!CLIENT_TOKEN) {
+    var scriptTag = document.currentScript || (function() {
+      var scripts = document.getElementsByTagName("script");
+      return scripts[scripts.length - 1];
+    })();
+    var scriptSrc = scriptTag ? (scriptTag.getAttribute("src") || "") : "";
+    var qIndex = scriptSrc.indexOf("?");
+    if (qIndex !== -1) {
+      var urlParams = new URLSearchParams(scriptSrc.slice(qIndex + 1));
+      CLIENT_TOKEN = urlParams.get("token") || "";
+    }
+  }
+
   var BASE_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
   var API_URL = BASE_URL + "/chat";
   var CONTACT_URL = BASE_URL + "/contact-human";
