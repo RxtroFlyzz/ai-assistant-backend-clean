@@ -479,7 +479,7 @@ function loadConv(id,el) {
       var div=document.createElement("div");
       div.className="msg "+msg.role;
       var who=msg.role==="user"?"Visiteur":"Assistant IA";
-      div.innerHTML="<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.replace(/\n/g,"<br>")+"</div>";
+      div.innerHTML="<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.split("\\n").join("<br>")+"</div>";
       wrap.appendChild(div);
     });
     area.scrollTop=area.scrollHeight;
