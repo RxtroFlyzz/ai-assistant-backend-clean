@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 import uuid
 import os
 import re
@@ -20,11 +21,9 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 resend.api_key = os.getenv("RESEND_API_KEY")
-
 SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "superadmin123")
 
 app = FastAPI()
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,8 +31,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 Base.metadata.create_all(bind=engine)
+
+
+# ── Migration automatique ─────────────────────────────────────────────────────
+def run_migrations():
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN state VARCHAR DEFAULT 'normal'"))
+            conn.commit()
+            print("Migration OK: colonne state ajoutee")
+        except Exception:
+            pass  # colonne deja existante
+
+run_migrations()
+
 
 def get_db():
     db = SessionLocal()
@@ -43,8 +55,145 @@ def get_db():
         db.close()
 
 
-# ── Modeles Pydantic ──────────────────────────────────────────────────────────
+# ── États de conversation ─────────────────────────────────────────────────────
+# normal   → conversation normale
+# proposed → l'IA a proposé un humain, on attend oui/non
+# asking   → on attend les coordonnées du visiteur
+# done     → coordonnées collectées, email envoyé
+STATE_NORMAL   = "normal"
+STATE_PROPOSED = "proposed"
+STATE_ASKING   = "asking"
+STATE_DONE     = "done"
 
+
+# ── Messages fixes ────────────────────────────────────────────────────────────
+HUMAN_PROPOSAL  = "Souhaitez-vous etre mis en relation avec un membre de notre equipe ?"
+ASKING_CONTACT  = "Parfait ! Donnez-moi votre prenom et votre numero de telephone, notre equipe vous contactera rapidement."
+HUMAN_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A bientot !"
+DECLINED        = "Pas de probleme ! N hesitez pas si vous avez d autres questions."
+
+
+# ── Détection demande humain (dans le message utilisateur) ───────────────────
+HUMAN_REGEX = re.compile(
+    r'\b(humain|assistant|conseiller|agent|support|contact|personne|'
+    r'rappel|rappeler|rendez.?vous|rdv|prendre contact|devis|intervention|'
+    r'technicien|plombier|electricien|quelqu.un|votre equipe|votre service)\b',
+    re.IGNORECASE
+)
+
+# ── Détection si GPT propose spontanément un humain ──────────────────────────
+GPT_PROPOSES_HUMAN = re.compile(
+    r'(mettre en relation|vous contacter|vous rappeler|prendre rendez|'
+    r'un devis|un technicien|notre equipe|nos conseillers|'
+    r'un professionnel|un expert|contactez.nous)',
+    re.IGNORECASE
+)
+
+
+def is_affirmative(text: str) -> bool:
+    """
+    Détecte si un message est affirmatif.
+    Règle : affirmatif sauf si explicitement négatif.
+    """
+    t = text.strip().lower()
+    if not t:
+        return False
+
+    # Explicitement négatif
+    negative = re.compile(
+        r'\b(non|no|nope|pas|jamais|nan|naan|nah|negative|'
+        r'je ne veux pas|ca ne m interesse pas|sans suite)\b',
+        re.IGNORECASE
+    )
+    if negative.search(t):
+        return False
+
+    # Réponse courte sans négation → affirmatif
+    if len(t.split()) <= 8:
+        return True
+
+    # Réponse longue avec mots affirmatifs
+    positive = re.compile(
+        r'\b(oui|yes|ok|okay|ouais|yep|bien|super|parfait|'
+        r'volontiers|svp|s.il vous plait|avec plaisir|'
+        r'pourquoi pas|allez|go|tout a fait|absolument|'
+        r'evidemment|bien sur|d accord|je veux|je voudrais|'
+        r'je souhaite|je suis interesse|carrément)\b',
+        re.IGNORECASE
+    )
+    return bool(positive.search(t))
+
+
+# ── Gestion de l'état en base ─────────────────────────────────────────────────
+def get_state(conv_id: str, db: Session) -> str:
+    try:
+        row = db.execute(
+            text("SELECT state FROM conversations WHERE id = :id"),
+            {"id": conv_id}
+        ).fetchone()
+        return row[0] if row and row[0] else STATE_NORMAL
+    except Exception:
+        return STATE_NORMAL
+
+
+def set_state(conv_id: str, state: str, db: Session):
+    try:
+        db.execute(
+            text("UPDATE conversations SET state = :s WHERE id = :id"),
+            {"s": state, "id": conv_id}
+        )
+        db.commit()
+    except Exception as e:
+        print("SET_STATE ERROR:", e)
+
+
+def save_message(conv_id: str, role: str, content: str, db: Session):
+    db.add(MessageModel(
+        id=str(uuid.uuid4()),
+        conversation_id=conv_id,
+        role=role,
+        content=content
+    ))
+    db.commit()
+
+
+def bot_reply(text_content: str, conv_id: str, needs_human: bool = False):
+    return {"reply": text_content, "conversation_id": conv_id, "needs_human": needs_human}
+
+
+# ── Email ─────────────────────────────────────────────────────────────────────
+def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
+    print("EMAIL START")
+    if not client_obj.client_email:
+        print("EMAIL SKIP: pas d email configure")
+        return
+    try:
+        params = {
+            "from": "Replai <noreply@gianluca-ai.fr>",
+            "to": [client_obj.client_email],
+            "subject": "Nouveau client a rappeler - " + client_obj.business_name,
+            "html": (
+                "<div style='font-family:Arial,sans-serif;max-width:600px'>"
+                "<h2 style='color:#6366f1'>Nouveau client a rappeler</h2>"
+                "<p><strong>Business :</strong> " + client_obj.business_name + "</p>"
+                "<p><strong>Conversation :</strong> " + conv_id[:8] + "</p>"
+                "<p><strong>Coordonnees :</strong> "
+                "<span style='color:#4f8eff;font-weight:bold;font-size:16px'>"
+                + contact_info +
+                "</span></p>"
+                "<p>Recontactez ce client rapidement !</p>"
+                "<hr style='border:none;border-top:1px solid #eee'>"
+                "<p style='color:#888;font-size:12px'>Replai — AI Widget pour TPEs</p>"
+                "</div>"
+            )
+        }
+        email = resend.Emails.send(params)
+        print("EMAIL SENT:", email['id'])
+    except Exception as e:
+        print("EMAIL ERROR:", str(e))
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
@@ -70,65 +219,12 @@ class UpdateClientRequest(BaseModel):
     client_email: Optional[str] = None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-HUMAN_REGEX = re.compile(
-    r"(assistant|humain|conseiller|agent|support|service client|contact|personne|rendez.?vous|rdv|rappeler|rappel|prendre contact)",
-    re.IGNORECASE
-)
-
-YES_REGEX = re.compile(
-    r"^(oui|ok|okay|yes|yep|svp|oui svp|oui merci|yes please|d accord|ok merci|bien sur|avec plaisir)$",
-    re.IGNORECASE
-)
-
-HUMAN_PROPOSAL = "Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?"
-ASKING_CONTACT = "Parfait ! Pour que notre equipe vous contacte rapidement, pouvez-vous me donner votre prenom et votre numero de telephone ?"
-HUMAN_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A tout de suite !"
-
-
-def get_client_or_404(token: str, db: Session) -> Client:
-    c = db.query(Client).filter(Client.token == token).first()
-    if not c:
-        raise HTTPException(status_code=404, detail="Client introuvable")
-    return c
-
-
-def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
-    print("EMAIL START")
-    if not client_obj.client_email:
-        return
-    try:
-        params = {
-            "from": "AI Widget <noreply@gianluca-ai.fr>",
-            "to": [client_obj.client_email],
-            "subject": "Nouveau client a rappeler - " + client_obj.business_name,
-            "html": (
-                "<h2>Un visiteur souhaite etre rappele</h2>"
-                "<p><strong>Business :</strong> " + client_obj.business_name + "</p>"
-                "<p><strong>Conversation ID :</strong> " + conv_id + "</p>"
-                "<p><strong>Coordonnees du visiteur :</strong> <span style='color:#4f8eff;font-weight:bold'>" + contact_info + "</span></p>"
-                "<p>Merci de le recontacter rapidement.</p>"
-                "<hr>"
-                "<p style='color:#888;font-size:12px'>Replai — AI Widget</p>"
-            )
-        }
-        email = resend.Emails.send(params)
-        print("EMAIL SENT: " + email['id'])
-    except Exception as e:
-        print("EMAIL ERROR: " + str(e))
-
-
 # ── Super-admin ───────────────────────────────────────────────────────────────
-
 @app.post("/superadmin/create-client")
 def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
     if req.superadmin_password != SUPERADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Non autorise")
     token = req.business_name.lower().replace(" ", "_") + "_" + str(uuid.uuid4())[:6]
-    existing = db.query(Client).filter(Client.token == token).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Token deja existant")
     new_client = Client(
         token=token,
         business_name=req.business_name,
@@ -161,25 +257,24 @@ def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
     if req.client_email is not None:
         c.client_email = req.client_email
     db.commit()
-    return {"ok": True, "token": c.token, "business_name": c.business_name}
+    return {"ok": True, "token": c.token}
 
 
 @app.get("/superadmin/clients")
 def list_clients(superadmin_password: str, db: Session = Depends(get_db)):
     if superadmin_password != SUPERADMIN_PASSWORD:
         raise HTTPException(status_code=401)
-    clients = db.query(Client).all()
-    return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email} for c in clients]
+    return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email}
+            for c in db.query(Client).all()]
 
 
 # ── Dashboard Admin ───────────────────────────────────────────────────────────
-
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Widget Admin</title>
+  <title>Replai Admin</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -223,6 +318,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     .ci-id { font-size: 13px; font-weight: 500; color: #e2e8f0; font-family: monospace; }
     .badge { background: #7f1d1d; color: #fca5a5; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
     .ci-meta { font-size: 11px; color: #475569; }
+    .contact-info { background: rgba(79,142,255,0.1); border: 1px solid rgba(79,142,255,0.3); border-radius: 8px; padding: 6px 10px; margin-top: 6px; font-size: 12px; color: #4f8eff; }
     .sb-bot { padding: 12px 16px; border-top: 1px solid #2d3148; }
     .btn-logout { width: 100%; padding: 8px; background: transparent; border: 1px solid #2d3148; border-radius: 8px; color: #64748b; font-size: 12px; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-logout:hover { border-color: #f87171; color: #f87171; }
@@ -245,15 +341,13 @@ ADMIN_HTML = """<!DOCTYPE html>
     .msg-text { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
     .msg.user .msg-text { background: #312e81; color: #e0e7ff; border-bottom-right-radius: 3px; }
     .msg.assistant .msg-text { background: #1e2035; color: #cbd5e1; border: 1px solid #2d3148; border-bottom-left-radius: 3px; }
-    .contact-info { background: rgba(79,142,255,0.1); border: 1px solid rgba(79,142,255,0.3); border-radius: 8px; padding: 8px 12px; margin-top: 6px; font-size: 12px; color: #4f8eff; }
   </style>
 </head>
 <body>
-
 <div id="login">
   <div class="card">
     <div class="logo">&#129302;</div>
-    <h2>AI Widget Admin</h2>
+    <h2>Replai Admin</h2>
     <p class="sub">Connectez-vous pour acceder au dashboard</p>
     <div class="pwd-row">
       <input type="password" id="pwd" placeholder="Mot de passe" />
@@ -263,14 +357,13 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="err" id="errMsg">Mot de passe incorrect</div>
   </div>
 </div>
-
 <div id="dashboard">
   <div class="layout">
     <div class="sidebar">
       <div class="sb-top">
         <div class="brand">
           <div class="brand-icon">&#129302;</div>
-          <span class="brand-name" id="businessName">AI Widget</span>
+          <span class="brand-name" id="businessName">Replai</span>
         </div>
         <div class="stats">
           <div class="stat"><span class="stat-n" id="totalN">0</span><span class="stat-l">Total</span></div>
@@ -278,7 +371,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
       </div>
       <div class="sb-mid">
-        <input class="search-input" id="searchInput" placeholder="&#128269; Rechercher une conversation..." />
+        <input class="search-input" id="searchInput" placeholder="&#128269; Rechercher..." />
         <button class="btn-refresh" id="refreshBtn">&#8635; Rafraichir</button>
       </div>
       <div class="conv-list" id="convList"></div>
@@ -300,153 +393,96 @@ ADMIN_HTML = """<!DOCTYPE html>
     </div>
   </div>
 </div>
-
 <script>
 var token = localStorage.getItem("wt") || "";
 var clientToken = new URLSearchParams(window.location.search).get("token") || "";
 var activeId = null;
 var allConvs = [];
-
 if (!clientToken) {
-  document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif;font-size:16px'>Token manquant. Utilisez /admin?token=VOTRE_TOKEN</div>";
+  document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif'>Token manquant dans l URL</div>";
 }
-
-if (token && clientToken) { doVerify(); }
-
-document.getElementById("eyeBtn").addEventListener("click", function() {
-  var inp = document.getElementById("pwd");
-  inp.type = inp.type === "password" ? "text" : "password";
-});
-
-document.getElementById("loginBtn").addEventListener("click", doLogin);
-document.getElementById("pwd").addEventListener("keydown", function(e) {
-  if (e.key === "Enter") { doLogin(); }
-});
-document.getElementById("refreshBtn").addEventListener("click", loadConvs);
-document.getElementById("logoutBtn").addEventListener("click", doLogout);
-document.getElementById("searchInput").addEventListener("input", function() {
-  renderConvList(filterConvs(this.value));
-});
-
+if (token && clientToken) doVerify();
+document.getElementById("eyeBtn").onclick = function() {
+  var i = document.getElementById("pwd");
+  i.type = i.type === "password" ? "text" : "password";
+};
+document.getElementById("loginBtn").onclick = doLogin;
+document.getElementById("pwd").onkeydown = function(e) { if (e.key==="Enter") doLogin(); };
+document.getElementById("refreshBtn").onclick = loadConvs;
+document.getElementById("logoutBtn").onclick = doLogout;
+document.getElementById("searchInput").oninput = function() { renderConvList(filterConvs(this.value)); };
 function doVerify() {
-  fetch("/admin/login", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({password: token, client_token: clientToken})
-  }).then(function(r) {
-    if (r.ok) { return r.json().then(function(d) { showDash(d.business_name); }); }
-    else { token = ""; localStorage.removeItem("wt"); }
-  });
+  fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:token,client_token:clientToken})})
+  .then(function(r){if(r.ok)r.json().then(function(d){showDash(d.business_name);}); else{token="";localStorage.removeItem("wt");}});
 }
-
 function doLogin() {
-  var pwd = document.getElementById("pwd").value;
-  var err = document.getElementById("errMsg");
-  err.style.display = "none";
-  fetch("/admin/login", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({password: pwd, client_token: clientToken})
-  }).then(function(r) {
-    if (r.ok) {
-      return r.json().then(function(d) {
-        token = pwd;
-        localStorage.setItem("wt", pwd);
-        showDash(d.business_name);
-      });
-    } else { err.style.display = "block"; }
-  }).catch(function() {
-    err.style.display = "block";
-    document.getElementById("errMsg").innerText = "Erreur reseau";
-  });
+  var pwd=document.getElementById("pwd").value;
+  var err=document.getElementById("errMsg");
+  err.style.display="none";
+  fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd,client_token:clientToken})})
+  .then(function(r){
+    if(r.ok)r.json().then(function(d){token=pwd;localStorage.setItem("wt",pwd);showDash(d.business_name);});
+    else err.style.display="block";
+  }).catch(function(){err.style.display="block";err.innerText="Erreur reseau";});
 }
-
-function showDash(businessName) {
-  document.getElementById("login").style.display = "none";
-  document.getElementById("dashboard").style.display = "block";
-  if (businessName) document.getElementById("businessName").innerText = businessName;
+function showDash(name) {
+  document.getElementById("login").style.display="none";
+  document.getElementById("dashboard").style.display="block";
+  if(name) document.getElementById("businessName").innerText=name;
   loadConvs();
 }
-
 function doLogout() {
-  localStorage.removeItem("wt");
-  token = "";
-  document.getElementById("dashboard").style.display = "none";
-  document.getElementById("login").style.display = "flex";
-  document.getElementById("pwd").value = "";
+  localStorage.removeItem("wt"); token="";
+  document.getElementById("dashboard").style.display="none";
+  document.getElementById("login").style.display="flex";
+  document.getElementById("pwd").value="";
 }
-
 function loadConvs() {
-  fetch("/admin/conversations?client_token=" + clientToken, {
-    headers: {"X-Admin-Password": token}
-  }).then(function(r) { return r.json(); }).then(function(data) {
-    allConvs = data;
-    renderConvList(data);
-  });
+  fetch("/admin/conversations?client_token="+clientToken,{headers:{"X-Admin-Password":token}})
+  .then(function(r){return r.json();}).then(function(data){allConvs=data;renderConvList(data);});
 }
-
-function filterConvs(query) {
-  if (!query) return allConvs;
-  var q = query.toLowerCase();
-  return allConvs.filter(function(c) {
-    return c.id.toLowerCase().includes(q) || (c.created_at && c.created_at.toLowerCase().includes(q));
-  });
+function filterConvs(q) {
+  if(!q) return allConvs;
+  q=q.toLowerCase();
+  return allConvs.filter(function(c){return c.id.toLowerCase().includes(q);});
 }
-
 function renderConvList(data) {
-  var list = document.getElementById("convList");
-  list.innerHTML = "";
-  var urgent = 0;
-  for (var i = 0; i < allConvs.length; i++) {
-    if (allConvs[i].needs_human) urgent++;
-  }
-  document.getElementById("totalN").innerText = allConvs.length;
-  document.getElementById("urgentN").innerText = urgent;
-  if (data.length === 0) {
-    list.innerHTML = "<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";
-    return;
-  }
-  for (var j = 0; j < data.length; j++) {
-    (function(conv) {
-      var div = document.createElement("div");
-      var cls = "ci";
-      if (conv.needs_human) cls += " urgent";
-      if (conv.id === activeId) cls += " active";
-      div.className = cls;
-      var contactBadge = conv.contact_info ? "<div class='contact-info'>📞 " + conv.contact_info + "</div>" : "";
-      div.innerHTML = "<div class='ci-top'><span class='ci-id'>#" + conv.id.slice(0,8) + "</span>" +
-        (conv.needs_human ? "<span class='badge'>HUMAIN</span>" : "") + "</div>" +
-        "<div class='ci-meta'>" + conv.created_at + " &middot; " + conv.message_count + " msg</div>" +
-        contactBadge;
-      div.addEventListener("click", function() { loadConv(conv.id, div); });
-      list.appendChild(div);
-    })(data[j]);
-  }
+  var list=document.getElementById("convList");
+  list.innerHTML="";
+  var urgent=allConvs.filter(function(c){return c.needs_human;}).length;
+  document.getElementById("totalN").innerText=allConvs.length;
+  document.getElementById("urgentN").innerText=urgent;
+  if(!data.length){list.innerHTML="<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";return;}
+  data.forEach(function(conv){
+    var div=document.createElement("div");
+    var cls="ci"+(conv.needs_human?" urgent":"")+(conv.id===activeId?" active":"");
+    div.className=cls;
+    var contact=conv.contact_info?"<div class='contact-info'>&#128222; "+conv.contact_info+"</div>":"";
+    div.innerHTML="<div class='ci-top'><span class='ci-id'>#"+conv.id.slice(0,8)+"</span>"+(conv.needs_human?"<span class='badge'>RAPPELER</span>":"")+"</div>"
+      +"<div class='ci-meta'>"+conv.created_at+" &middot; "+conv.message_count+" msg</div>"+contact;
+    div.onclick=function(){loadConv(conv.id,div);};
+    list.appendChild(div);
+  });
 }
-
-function loadConv(id, el) {
-  activeId = id;
-  var items = document.getElementsByClassName("ci");
-  for (var i = 0; i < items.length; i++) { items[i].classList.remove("active"); }
-  if (el) el.classList.add("active");
-  document.getElementById("hdrTitle").innerText = "Conversation #" + id.slice(0,8);
-  document.getElementById("hdrSub").innerText = "Historique complet";
-  fetch("/admin/conversations/" + id + "?client_token=" + clientToken, {
-    headers: {"X-Admin-Password": token}
-  }).then(function(r) { return r.json(); }).then(function(data) {
-    var area = document.getElementById("msgsArea");
-    area.innerHTML = "<div class='msgs-wrap' id='msgsWrap'></div>";
-    var wrap = document.getElementById("msgsWrap");
-    for (var i = 0; i < data.length; i++) {
-      var msg = data[i];
-      var div = document.createElement("div");
-      div.className = "msg " + msg.role;
-      var who = msg.role === "user" ? "Visiteur" : "Assistant IA";
-      var txt = msg.content.split("\\n").join("<br>");
-      div.innerHTML = "<div class='msg-who'>" + who + "</div><div class='msg-text'>" + txt + "</div>";
+function loadConv(id,el) {
+  activeId=id;
+  document.querySelectorAll(".ci").forEach(function(x){x.classList.remove("active");});
+  if(el) el.classList.add("active");
+  document.getElementById("hdrTitle").innerText="Conversation #"+id.slice(0,8);
+  document.getElementById("hdrSub").innerText="Historique complet";
+  fetch("/admin/conversations/"+id+"?client_token="+clientToken,{headers:{"X-Admin-Password":token}})
+  .then(function(r){return r.json();}).then(function(data){
+    var area=document.getElementById("msgsArea");
+    area.innerHTML="<div class='msgs-wrap' id='msgsWrap'></div>";
+    var wrap=document.getElementById("msgsWrap");
+    data.forEach(function(msg){
+      var div=document.createElement("div");
+      div.className="msg "+msg.role;
+      var who=msg.role==="user"?"Visiteur":"Assistant IA";
+      div.innerHTML="<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.replace(/\n/g,"<br>")+"</div>";
       wrap.appendChild(div);
-    }
-    area.scrollTop = area.scrollHeight;
+    });
+    area.scrollTop=area.scrollHeight;
   });
 }
 </script>
@@ -458,84 +494,76 @@ function loadConv(id, el) {
 def admin_page():
     return HTMLResponse(content=ADMIN_HTML)
 
+
 @app.post("/admin/login")
 def admin_login(data: dict, db: Session = Depends(get_db)):
-    client_token = data.get("client_token", "")
-    password = data.get("password", "")
-    c = db.query(Client).filter(Client.token == client_token).first()
-    if not c or c.admin_password != password:
-        raise HTTPException(status_code=401, detail="Mot de passe incorrect")
+    c = db.query(Client).filter(Client.token == data.get("client_token","")).first()
+    if not c or c.admin_password != data.get("password",""):
+        raise HTTPException(status_code=401)
     return {"ok": True, "business_name": c.business_name}
+
 
 @app.get("/admin/conversations")
 def admin_conversations(client_token: str, request: Request, db: Session = Depends(get_db)):
-    password = request.headers.get("X-Admin-Password", "")
+    password = request.headers.get("X-Admin-Password","")
     c = db.query(Client).filter(Client.token == client_token).first()
     if not c or c.admin_password != password:
         raise HTTPException(status_code=401)
-    conversations = db.query(Conversation).filter(
+    convs = db.query(Conversation).filter(
         Conversation.client_token == client_token
     ).order_by(Conversation.created_at.desc()).all()
     result = []
-    for conv in conversations:
-        messages = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).all()
-        needs_human = any(
-            m.role == "assistant" and "notre equipe va vous contacter" in m.content.lower()
-            for m in messages
-        )
-        # Cherche les coordonnees du visiteur dans les messages
+    for conv in convs:
+        msgs = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).order_by(MessageModel.created_at).all()
+        state = get_state(conv.id, db)
+        needs_human = state == STATE_DONE
         contact_info = None
-        for i, m in enumerate(messages):
-            if m.role == "assistant" and "prenom et votre numero" in m.content.lower():
-                if i + 1 < len(messages) and messages[i + 1].role == "user":
-                    contact_info = messages[i + 1].content
+        for i, m in enumerate(msgs):
+            if m.role == "assistant" and "prenom" in m.content.lower() and "telephone" in m.content.lower():
+                if i + 1 < len(msgs) and msgs[i+1].role == "user":
+                    contact_info = msgs[i+1].content
                     break
         result.append({
             "id": conv.id,
             "created_at": str(conv.created_at)[:16] if conv.created_at else "--",
-            "message_count": len(messages),
+            "message_count": len(msgs),
             "needs_human": needs_human,
-            "contact_info": contact_info
+            "contact_info": contact_info,
+            "state": state
         })
     return result
 
+
 @app.get("/admin/conversations/{conv_id}")
 def admin_conversation_detail(conv_id: str, client_token: str, request: Request, db: Session = Depends(get_db)):
-    password = request.headers.get("X-Admin-Password", "")
+    password = request.headers.get("X-Admin-Password","")
     c = db.query(Client).filter(Client.token == client_token).first()
     if not c or c.admin_password != password:
         raise HTTPException(status_code=401)
     conv = db.query(Conversation).filter(
-        Conversation.id == conv_id,
-        Conversation.client_token == client_token
+        Conversation.id == conv_id, Conversation.client_token == client_token
     ).first()
     if not conv:
         raise HTTPException(status_code=404)
-    messages = db.query(MessageModel).filter(
+    msgs = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
-    return [{"role": m.role, "content": m.content} for m in messages]
+    return [{"role": m.role, "content": m.content} for m in msgs]
 
 
 @app.post("/contact-human")
 def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
+    """Bouton 'Parler à un humain' → passe directement à l'état ASKING"""
     conv_id = req.conversation_id or str(uuid.uuid4())
     client_token = req.client_token or ""
-    c = db.query(Client).filter(Client.token == client_token).first()
-    conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
-    if not conversation:
-        conversation = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
-        db.add(conversation)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        conv = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
+        db.add(conv)
         db.commit()
-    # Via le bouton "Parler a un humain" : on demande les coordonnees
-    db.add(MessageModel(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="assistant",
-        content=ASKING_CONTACT
-    ))
-    db.commit()
-    return {"reply": ASKING_CONTACT, "conversation_id": conv_id, "needs_human": False}
+    set_state(conv_id, STATE_ASKING, db)
+    save_message(conv_id, "assistant", ASKING_CONTACT, db)
+    return bot_reply(ASKING_CONTACT, conv_id, False)
 
 
 @app.post("/chat")
@@ -544,70 +572,45 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     client_token = msg.client_token or ""
     c = db.query(Client).filter(Client.token == client_token).first()
 
-    conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
-    if not conversation:
-        conversation = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
-        db.add(conversation)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        conv = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
+        db.add(conv)
         db.commit()
 
-    db.add(MessageModel(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="user",
-        content=msg.message
-    ))
-    db.commit()
+    save_message(conv_id, "user", msg.message, db)
+    state = get_state(conv_id, db)
 
-    last_ai = db.query(MessageModel).filter(
-        MessageModel.conversation_id == conv_id,
-        MessageModel.role == "assistant"
-    ).order_by(MessageModel.created_at.desc()).first()
-
-    # ETAPE 3 : Le visiteur vient de donner ses coordonnees
-    if last_ai and "prenom et votre numero" in last_ai.content.lower():
-        contact_info = msg.message
+    # ── ÉTAT ASKING : on récupère les coordonnées ──────────────────────────────
+    if state == STATE_ASKING:
         if c:
-            send_human_email(conv_id, contact_info, c)
-        db.add(MessageModel(
-            id=str(uuid.uuid4()),
-            conversation_id=conv_id,
-            role="assistant",
-            content=HUMAN_CONFIRMED
-        ))
-        db.commit()
-        return {"reply": HUMAN_CONFIRMED, "conversation_id": conv_id, "needs_human": True}
+            send_human_email(conv_id, msg.message, c)
+        set_state(conv_id, STATE_DONE, db)
+        save_message(conv_id, "assistant", HUMAN_CONFIRMED, db)
+        return bot_reply(HUMAN_CONFIRMED, conv_id, True)
 
-    # ETAPE 2 : Le visiteur dit oui → on demande ses coordonnees
-    if last_ai and ("assistant humain" in last_ai.content.lower() or
-                    "mis en relation" in last_ai.content.lower() or
-                    "parler" in last_ai.content.lower() or
-                    "conseiller" in last_ai.content.lower()):
-        if YES_REGEX.match(msg.message.strip().lower()):
-            db.add(MessageModel(
-                id=str(uuid.uuid4()),
-                conversation_id=conv_id,
-                role="assistant",
-                content=ASKING_CONTACT
-            ))
-            db.commit()
-            return {"reply": ASKING_CONTACT, "conversation_id": conv_id, "needs_human": False}
+    # ── ÉTAT PROPOSED : visiteur répond oui/non ────────────────────────────────
+    if state == STATE_PROPOSED:
+        if is_affirmative(msg.message):
+            set_state(conv_id, STATE_ASKING, db)
+            save_message(conv_id, "assistant", ASKING_CONTACT, db)
+            return bot_reply(ASKING_CONTACT, conv_id, False)
+        else:
+            set_state(conv_id, STATE_NORMAL, db)
+            save_message(conv_id, "assistant", DECLINED, db)
+            return bot_reply(DECLINED, conv_id, False)
 
-    # ETAPE 1 : Detection demande humain → proposition
+    # ── ÉTAT NORMAL ────────────────────────────────────────────────────────────
+    # Détection explicite : le visiteur demande directement un humain
     if HUMAN_REGEX.search(msg.message):
-        db.add(MessageModel(
-            id=str(uuid.uuid4()),
-            conversation_id=conv_id,
-            role="assistant",
-            content=HUMAN_PROPOSAL
-        ))
-        db.commit()
-        return {"reply": HUMAN_PROPOSAL, "conversation_id": conv_id, "needs_human": False}
+        set_state(conv_id, STATE_PROPOSED, db)
+        save_message(conv_id, "assistant", HUMAN_PROPOSAL, db)
+        return bot_reply(HUMAN_PROPOSAL, conv_id, False)
 
+    # Appel GPT
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
-
-    messages_for_openai = []
 
     if c and c.system_prompt:
         base_prompt = c.system_prompt
@@ -620,12 +623,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     base_prompt += (
         "\n\nREGLES :\n"
         "- Reponds dans la meme langue que le visiteur\n"
-        "- Si le visiteur est irrespectueux ou pose des questions hors sujet, reponds poliment que tu es uniquement disponible pour les questions liees a ton activite\n"
-        "- Si tu ne peux pas repondre, utilise EXACTEMENT cette phrase : "
-        "'Ces informations ne sont pas disponibles. Souhaitez-vous etre mis en relation avec un assistant humain ?'"
+        "- Reponds uniquement aux questions liees a l activite du business\n"
+        "- Sois concis, professionnel et serviable\n"
+        "- Si tu ne connais pas la reponse, dis-le simplement"
     )
 
-    messages_for_openai.append({"role": "system", "content": base_prompt})
+    messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
 
@@ -634,14 +637,13 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         messages=messages_for_openai
     )
     reply = response.choices[0].message.content
-    db.add(MessageModel(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="assistant",
-        content=reply
-    ))
-    db.commit()
-    return {"reply": reply, "conversation_id": conv_id, "needs_human": False}
+
+    # Si GPT propose spontanément un humain → passer à l'état PROPOSED
+    if GPT_PROPOSES_HUMAN.search(reply):
+        set_state(conv_id, STATE_PROPOSED, db)
+
+    save_message(conv_id, "assistant", reply, db)
+    return bot_reply(reply, conv_id, False)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
