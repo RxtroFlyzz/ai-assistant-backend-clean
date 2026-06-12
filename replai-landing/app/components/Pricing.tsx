@@ -74,9 +74,8 @@ export default function Pricing() {
                 </p>
               </div>
 
-              {/* Right: price display — 499€ is the HERO price */}
+              {/* Right: price display */}
               <div className="sm:text-right flex-shrink-0">
-                {/* One-time setup — hero price */}
                 <div className="flex sm:justify-end items-baseline gap-1.5">
                   <span className="font-display font-bold text-5xl sm:text-6xl text-white leading-none">
                     499€
@@ -85,8 +84,6 @@ export default function Pricing() {
                 <div className="text-sm font-medium text-slate-300 mt-1">
                   setup unique (une seule fois)
                 </div>
-
-                {/* Monthly — secondary */}
                 <div className="mt-3 flex sm:justify-end items-center gap-2">
                   <div className="h-px w-8 bg-white/10" />
                   <span className="text-lg font-semibold text-indigo-300">
@@ -132,6 +129,17 @@ export default function Pricing() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
               </svg>
             </motion.a>
+
+            {/* Requête sur mesure */}
+            <p className="text-center text-sm text-slate-500 mt-4">
+              {t("price.custom.pre")}{" "}
+              <a
+                href="mailto:contact@gianluca-ai.fr"
+                className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 transition-colors duration-150"
+              >
+                {t("price.custom.link")}
+              </a>
+            </p>
           </div>
         </motion.div>
 

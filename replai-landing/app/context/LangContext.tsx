@@ -97,10 +97,10 @@ export const translations: Record<string, Record<Lang, string>> = {
     fr: "Recevez chaque nouveau contact directement dans votre boîte mail.",
     en: "Receive every new lead directly in your inbox.",
   },
-  "feat.dashboard.title": { fr: "Dashboard analytique", en: "Analytics dashboard" },
+  "feat.dashboard.title": { fr: "Dashboard de suivi des leads", en: "Lead tracking dashboard" },
   "feat.dashboard.desc": {
-    fr: "Suivez conversations, leads et performances en temps réel.",
-    en: "Track conversations, leads and performance in real time.",
+    fr: "Suivez conversations et leads en temps réel.",
+    en: "Track conversations and leads in real time.",
   },
   "feat.multi.title": { fr: "Multilingue automatique", en: "Auto multilingual" },
   "feat.multi.desc": {
@@ -129,13 +129,15 @@ export const translations: Record<string, Record<Lang, string>> = {
   },
   "price.f1": { fr: "IA formée sur votre activité", en: "AI trained on your business" },
   "price.f2": { fr: "Intégration en 24h", en: "24h integration" },
-  "price.f3": { fr: "Dashboard analytics", en: "Analytics dashboard" },
+  "price.f3": { fr: "Dashboard de suivi des leads", en: "Lead tracking dashboard" },
   "price.f4": { fr: "Alertes email en temps réel", en: "Real-time email alerts" },
   "price.f5": { fr: "Support prioritaire", en: "Priority support" },
   "price.f6": { fr: "Mises à jour illimitées", en: "Unlimited updates" },
   "price.f7": { fr: "Hébergement RGPD EU", en: "GDPR EU hosting" },
   "price.f8": { fr: "Multilingue inclus", en: "Multilingual included" },
   "price.cta": { fr: "Démarrer mon projet", en: "Start my project" },
+  "price.custom.pre": { fr: "Besoin d'une intégration spécifique ?", en: "Need a custom integration?" },
+  "price.custom.link": { fr: "Contactez-nous", en: "Contact us" },
 
   // CTA
   "cta.title": { fr: "Prêt à ne plus manquer aucun client ?", en: "Ready to never miss a client again?" },
