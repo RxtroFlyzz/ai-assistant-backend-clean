@@ -109,23 +109,38 @@ GPT_PROPOSES_HUMAN = re.compile(
 
 # ── Fonctions GPT pour l'international ───────────────────────────────────────
 
-def translate_to_visitor_language(canonical_msg: str, visitor_message: str) -> str:
+def get_visitor_messages(conv_id: str, db: Session) -> list:
+    """Retourne les derniers messages du visiteur pour détecter la langue."""
+    msgs = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conv_id,
+        MessageModel.role == "user"
+    ).order_by(MessageModel.created_at).all()
+    return [m.content for m in msgs]
+
+def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) -> str:
     """
     Traduit un message canonique dans la langue du visiteur.
+    Prend une liste des derniers messages visiteur pour un contexte fiable.
     Fonctionne avec TOUTES les langues (japonais, arabe, russe, etc.)
     Si erreur → retourne le message français (fallback sûr).
     """
+    # Concaténer les derniers messages visiteur pour détecter la langue de manière fiable
+    context = " | ".join(visitor_messages[-3:]) if visitor_messages else ""
+    if not context:
+        return canonical_msg
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             max_tokens=120,
             messages=[
                 {"role": "system", "content": (
-                    "Translate the following message into the same language as the user's message. "
+                    "Detect the language from the conversation context and translate the message into that language. "
+                    "The context may contain multiple messages separated by | — use the overall language pattern, "
+                    "not just the last message (which may contain a name or phone number). "
                     "Return ONLY the translated message, nothing else. "
-                    "If the user's language is unclear, return the message in English."
+                    "If the language is unclear, return the message in English."
                 )},
-                {"role": "user", "content": "User's message: " + visitor_message[:200] + "\n\nMessage to translate: " + canonical_msg}
+                {"role": "user", "content": "Conversation context: " + context[:400] + "\n\nMessage to translate: " + canonical_msg}
             ]
         )
         result = response.choices[0].message.content.strip()
@@ -615,11 +630,8 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
         db.commit()
 
     # Traduit dans la langue du dernier message visiteur (si existe)
-    last_user = db.query(MessageModel).filter(
-        MessageModel.conversation_id == conv_id,
-        MessageModel.role == "user"
-    ).order_by(MessageModel.created_at.desc()).first()
-    reply = translate_to_visitor_language(MSG_ASKING, last_user.content) if last_user else MSG_ASKING
+    visitor_msgs = get_visitor_messages(conv_id, db)
+    reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs) if visitor_msgs else MSG_ASKING
 
     set_state(conv_id, STATE_ASKING, db)
     save_message(conv_id, "assistant", reply, db)
@@ -640,6 +652,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     save_message(conv_id, "user", msg.message, db)
     state = get_state(conv_id, db)
+    visitor_msgs = get_visitor_messages(conv_id, db)  # pour détecter la langue
 
     # ── ÉTAT ASKING : on attend les coordonnées ────────────────────────────────
     if state == STATE_ASKING:
@@ -648,12 +661,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             if c:
                 send_human_email(conv_id, msg.message, c)
             set_state(conv_id, STATE_DONE, db)
-            reply = translate_to_visitor_language(MSG_CONFIRMED, msg.message)
+            reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, True)
         else:
             # Pas de numéro → re-demander dans la langue du visiteur
-            reply = translate_to_visitor_language(MSG_ASKING, msg.message)
+            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
 
@@ -661,12 +674,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     if state == STATE_PROPOSED:
         if classify_yes_no(msg.message):
             set_state(conv_id, STATE_ASKING, db)
-            reply = translate_to_visitor_language(MSG_ASKING, msg.message)
+            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
         else:
             set_state(conv_id, STATE_NORMAL, db)
-            reply = translate_to_visitor_language(MSG_DECLINED, msg.message)
+            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
 
@@ -674,7 +687,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     # Détection explicite : le visiteur demande un humain
     if HUMAN_REGEX.search(msg.message):
         set_state(conv_id, STATE_PROPOSED, db)
-        reply = translate_to_visitor_language(MSG_PROPOSAL, msg.message)
+        reply = translate_to_visitor_language(MSG_PROPOSAL, visitor_msgs)
         save_message(conv_id, "assistant", reply, db)
         return bot_reply(reply, conv_id, False)
 
