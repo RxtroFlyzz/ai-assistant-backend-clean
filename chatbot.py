@@ -66,62 +66,113 @@ STATE_ASKING   = "asking"
 STATE_DONE     = "done"
 
 
-# ── Messages fixes ────────────────────────────────────────────────────────────
-HUMAN_PROPOSAL  = "Souhaitez-vous etre mis en relation avec un membre de notre equipe ?"
-ASKING_CONTACT  = "Parfait ! Donnez-moi votre prenom et votre numero de telephone, notre equipe vous contactera rapidement."
-HUMAN_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A bientot !"
-DECLINED        = "Pas de probleme ! N hesitez pas si vous avez d autres questions."
+# ── Messages canoniques (référence en français, traduits par GPT) ────────────
+MSG_PROPOSAL  = "Souhaitez-vous etre contacte par notre equipe ?"
+MSG_ASKING    = "Parfait ! Donnez-moi votre prenom et votre numero de telephone, notre equipe vous contactera rapidement."
+MSG_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A bientot !"
+MSG_DECLINED  = "Pas de probleme, je reste a votre disposition si besoin !"
 
 
-# ── Détection demande humain (dans le message utilisateur) ───────────────────
+# ── Détection demande humain — multilingue (FR/EN/IT/ES/DE/PT/NL) ───────────
 HUMAN_REGEX = re.compile(
-    r'\b(humain|assistant|conseiller|agent|support|contact|personne|'
-    r'rappel|rappeler|rendez.?vous|rdv|prendre contact|devis|intervention|'
-    r'technicien|plombier|electricien|quelqu.un|votre equipe|votre service)\b',
+    # Français
+    r'\b(humain|assistant|conseiller|agent|rappel|rappeler|rendez.?vous|rdv|'
+    r'devis|intervention|technicien|quelqu.un|votre equipe|'
+    # Anglais
+    r'human|someone|somebody|callback|call me|speak to|talk to|'
+    r'appointment|quote|technician|real person|your team|'
+    # Italien
+    r'umano|qualcuno|richiamare|richiamarmi|appuntamento|preventivo|tecnico|'
+    # Espagnol
+    r'humano|alguien|llamarme|cita|presupuesto|tecnico|'
+    # Allemand
+    r'mensch|jemand|zuruckrufen|termin|angebot|techniker|'
+    # Portugais
+    r'humano|alguem|ligar|orcamento|tecnico|'
+    # Néerlandais
+    r'mens|iemand|terugbellen|afspraak|offerte|monteur)\b',
     re.IGNORECASE
 )
 
 # ── Détection si GPT propose spontanément un humain ──────────────────────────
 GPT_PROPOSES_HUMAN = re.compile(
     r'(mettre en relation|vous contacter|vous rappeler|prendre rendez|'
-    r'un devis|un technicien|notre equipe|nos conseillers|'
-    r'un professionnel|un expert|contactez.nous)',
+    r'un devis|un technicien|notre equipe|nos conseillers|un expert|contactez.nous|'
+    r'arrange for|put you in touch|contact you|call you back|'
+    r'our team|a technician|an expert|schedule|get in touch|'
+    r'metterti in contatto|contattarti|richiamarti|il nostro team|'
+    r'ponernos en contacto|contactarte|nuestro equipo|'
+    r'kontaktieren|unser team|in verbindung)',
     re.IGNORECASE
 )
 
 
-def is_affirmative(text: str) -> bool:
+# ── Fonctions GPT pour l'international ───────────────────────────────────────
+
+def translate_to_visitor_language(canonical_msg: str, visitor_message: str) -> str:
     """
-    Détecte si un message est affirmatif.
-    Règle : affirmatif sauf si explicitement négatif.
+    Traduit un message canonique dans la langue du visiteur.
+    Fonctionne avec TOUTES les langues (japonais, arabe, russe, etc.)
+    Si erreur → retourne le message français (fallback sûr).
     """
-    t = text.strip().lower()
-    if not t:
-        return False
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=120,
+            messages=[
+                {"role": "system", "content": (
+                    "Translate the following message into the same language as the user's message. "
+                    "Return ONLY the translated message, nothing else. "
+                    "If the user's language is unclear, return the message in English."
+                )},
+                {"role": "user", "content": "User's message: " + visitor_message[:200] + "\n\nMessage to translate: " + canonical_msg}
+            ]
+        )
+        result = response.choices[0].message.content.strip()
+        return result if result else canonical_msg
+    except Exception as e:
+        print("TRANSLATE ERROR:", e)
+        return canonical_msg
 
-    # Explicitement négatif
-    negative = re.compile(
-        r'\b(non|no|nope|pas|jamais|nan|naan|nah|negative|'
-        r'je ne veux pas|ca ne m interesse pas|sans suite)\b',
-        re.IGNORECASE
-    )
-    if negative.search(t):
-        return False
 
-    # Réponse courte sans négation → affirmatif
-    if len(t.split()) <= 8:
-        return True
+def classify_yes_no(visitor_message: str) -> bool:
+    """
+    Classifie si la réponse du visiteur est affirmative.
+    Fonctionne dans TOUTES les langues via GPT.
+    Fallback regex si erreur API.
+    """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=5,
+            messages=[
+                {"role": "system", "content": (
+                    "The user was asked if they want to be contacted by a team member. "
+                    "Classify their reply. Answer ONLY with YES or NO. "
+                    "YES = they accept (any language: oui, yes, si, ja, da, hai, etc. or any positive phrasing). "
+                    "NO = they decline or refuse."
+                )},
+                {"role": "user", "content": visitor_message[:300]}
+            ]
+        )
+        return "YES" in response.choices[0].message.content.upper()
+    except Exception as e:
+        print("CLASSIFY ERROR:", e)
+        # Fallback regex basique multilingue
+        t = visitor_message.strip().lower()
+        negative = re.compile(r'\b(non|no|nope|nein|nee|nej|niet|nao|jamais|never|not)\b', re.IGNORECASE)
+        if negative.search(t):
+            return False
+        return len(t.split()) <= 8
 
-    # Réponse longue avec mots affirmatifs
-    positive = re.compile(
-        r'\b(oui|yes|ok|okay|ouais|yep|bien|super|parfait|'
-        r'volontiers|svp|s.il vous plait|avec plaisir|'
-        r'pourquoi pas|allez|go|tout a fait|absolument|'
-        r'evidemment|bien sur|d accord|je veux|je voudrais|'
-        r'je souhaite|je suis interesse|carrément)\b',
-        re.IGNORECASE
-    )
-    return bool(positive.search(t))
+
+def contains_contact_info(message: str) -> bool:
+    """
+    Vérifie si le message contient des coordonnées (au moins quelques chiffres).
+    Un numéro de téléphone contient toujours des chiffres, peu importe le pays.
+    """
+    digits = re.sub(r'\D', '', message)
+    return len(digits) >= 6  # numéro de téléphone minimum
 
 
 # ── Gestion de l'état en base ─────────────────────────────────────────────────
@@ -517,18 +568,19 @@ def admin_conversations(client_token: str, request: Request, db: Session = Depen
         msgs = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).order_by(MessageModel.created_at).all()
         state = get_state(conv.id, db)
         needs_human = state == STATE_DONE
+        # Le contact = le message user qui contient 6+ chiffres apres une demande de coordonnees
         contact_info = None
-        for i, m in enumerate(msgs):
-            if m.role == "assistant" and "prenom" in m.content.lower() and "telephone" in m.content.lower():
-                if i + 1 < len(msgs) and msgs[i+1].role == "user":
-                    contact_info = msgs[i+1].content
-                    break
+        for m in msgs:
+            if m.role == "user":
+                digits = re.sub(r'\D', '', m.content)
+                if len(digits) >= 6:
+                    contact_info = m.content
         result.append({
             "id": conv.id,
             "created_at": str(conv.created_at)[:16] if conv.created_at else "--",
             "message_count": len(msgs),
             "needs_human": needs_human,
-            "contact_info": contact_info,
+            "contact_info": contact_info if needs_human else None,
             "state": state
         })
     return result
@@ -561,9 +613,17 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
         conv = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
         db.add(conv)
         db.commit()
+
+    # Traduit dans la langue du dernier message visiteur (si existe)
+    last_user = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conv_id,
+        MessageModel.role == "user"
+    ).order_by(MessageModel.created_at.desc()).first()
+    reply = translate_to_visitor_language(MSG_ASKING, last_user.content) if last_user else MSG_ASKING
+
     set_state(conv_id, STATE_ASKING, db)
-    save_message(conv_id, "assistant", ASKING_CONTACT, db)
-    return bot_reply(ASKING_CONTACT, conv_id, False)
+    save_message(conv_id, "assistant", reply, db)
+    return bot_reply(reply, conv_id, False)
 
 
 @app.post("/chat")
@@ -581,33 +641,44 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     save_message(conv_id, "user", msg.message, db)
     state = get_state(conv_id, db)
 
-    # ── ÉTAT ASKING : on récupère les coordonnées ──────────────────────────────
+    # ── ÉTAT ASKING : on attend les coordonnées ────────────────────────────────
     if state == STATE_ASKING:
-        if c:
-            send_human_email(conv_id, msg.message, c)
-        set_state(conv_id, STATE_DONE, db)
-        save_message(conv_id, "assistant", HUMAN_CONFIRMED, db)
-        return bot_reply(HUMAN_CONFIRMED, conv_id, True)
+        if contains_contact_info(msg.message):
+            # Coordonnées valides (contient un numéro de téléphone)
+            if c:
+                send_human_email(conv_id, msg.message, c)
+            set_state(conv_id, STATE_DONE, db)
+            reply = translate_to_visitor_language(MSG_CONFIRMED, msg.message)
+            save_message(conv_id, "assistant", reply, db)
+            return bot_reply(reply, conv_id, True)
+        else:
+            # Pas de numéro → re-demander dans la langue du visiteur
+            reply = translate_to_visitor_language(MSG_ASKING, msg.message)
+            save_message(conv_id, "assistant", reply, db)
+            return bot_reply(reply, conv_id, False)
 
     # ── ÉTAT PROPOSED : visiteur répond oui/non ────────────────────────────────
     if state == STATE_PROPOSED:
-        if is_affirmative(msg.message):
+        if classify_yes_no(msg.message):
             set_state(conv_id, STATE_ASKING, db)
-            save_message(conv_id, "assistant", ASKING_CONTACT, db)
-            return bot_reply(ASKING_CONTACT, conv_id, False)
+            reply = translate_to_visitor_language(MSG_ASKING, msg.message)
+            save_message(conv_id, "assistant", reply, db)
+            return bot_reply(reply, conv_id, False)
         else:
             set_state(conv_id, STATE_NORMAL, db)
-            save_message(conv_id, "assistant", DECLINED, db)
-            return bot_reply(DECLINED, conv_id, False)
+            reply = translate_to_visitor_language(MSG_DECLINED, msg.message)
+            save_message(conv_id, "assistant", reply, db)
+            return bot_reply(reply, conv_id, False)
 
     # ── ÉTAT NORMAL ────────────────────────────────────────────────────────────
-    # Détection explicite : le visiteur demande directement un humain
+    # Détection explicite : le visiteur demande un humain
     if HUMAN_REGEX.search(msg.message):
         set_state(conv_id, STATE_PROPOSED, db)
-        save_message(conv_id, "assistant", HUMAN_PROPOSAL, db)
-        return bot_reply(HUMAN_PROPOSAL, conv_id, False)
+        reply = translate_to_visitor_language(MSG_PROPOSAL, msg.message)
+        save_message(conv_id, "assistant", reply, db)
+        return bot_reply(reply, conv_id, False)
 
-    # Appel GPT
+    # Appel GPT normal
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
@@ -622,7 +693,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     base_prompt += (
         "\n\nREGLES :\n"
-        "- Reponds dans la meme langue que le visiteur\n"
+        "- Reponds TOUJOURS dans la meme langue que le dernier message du visiteur\n"
         "- Reponds uniquement aux questions liees a l activite du business\n"
         "- Sois concis, professionnel et serviable\n"
         "- Si tu ne connais pas la reponse, dis-le simplement"
