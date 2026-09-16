@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -33,7 +34,13 @@ export default function RootLayout({
           href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&f[]=dm-sans@400,500,600&display=swap"
         />
       </head>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {children}
+        <Script
+          src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=replai_cb23fd"
+          strategy="afterInteractive"
+        />
+      </body>
     </html>
   );
 }
