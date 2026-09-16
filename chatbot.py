@@ -10,6 +10,7 @@ import uuid
 import os
 import re
 import resend
+from datetime import datetime
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -42,7 +43,7 @@ def run_migrations():
             conn.commit()
             print("Migration OK: colonne state ajoutee")
         except Exception:
-            pass  # colonne deja existante
+            pass
 
 run_migrations()
 
@@ -56,45 +57,31 @@ def get_db():
 
 
 # ── États de conversation ─────────────────────────────────────────────────────
-# normal   → conversation normale
-# proposed → l'IA a proposé un humain, on attend oui/non
-# asking   → on attend les coordonnées du visiteur
-# done     → coordonnées collectées, email envoyé
 STATE_NORMAL   = "normal"
 STATE_PROPOSED = "proposed"
 STATE_ASKING   = "asking"
 STATE_DONE     = "done"
 
-
-# ── Messages canoniques (référence en français, traduits par GPT) ────────────
 MSG_PROPOSAL  = "Souhaitez-vous etre contacte par notre equipe ?"
 MSG_ASKING    = "Parfait ! Donnez-moi votre prenom et votre numero de telephone, notre equipe vous contactera rapidement."
 MSG_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A bientot !"
 MSG_DECLINED  = "Pas de probleme, je reste a votre disposition si besoin !"
 
 
-# ── Détection demande humain — multilingue (FR/EN/IT/ES/DE/PT/NL) ───────────
+# ── Détection demande humain ──────────────────────────────────────────────────
 HUMAN_REGEX = re.compile(
-    # Français
     r'\b(humain|assistant|conseiller|agent|rappel|rappeler|rendez.?vous|rdv|'
     r'devis|intervention|technicien|quelqu.un|votre equipe|'
-    # Anglais
     r'human|someone|somebody|callback|call me|speak to|talk to|'
     r'appointment|quote|technician|real person|your team|'
-    # Italien
     r'umano|qualcuno|richiamare|richiamarmi|appuntamento|preventivo|tecnico|'
-    # Espagnol
     r'humano|alguien|llamarme|cita|presupuesto|tecnico|'
-    # Allemand
     r'mensch|jemand|zuruckrufen|termin|angebot|techniker|'
-    # Portugais
     r'humano|alguem|ligar|orcamento|tecnico|'
-    # Néerlandais
     r'mens|iemand|terugbellen|afspraak|offerte|monteur)\b',
     re.IGNORECASE
 )
 
-# ── Détection si GPT propose spontanément un humain ──────────────────────────
 GPT_PROPOSES_HUMAN = re.compile(
     r'(mettre en relation|vous contacter|vous rappeler|prendre rendez|'
     r'un devis|un technicien|notre equipe|nos conseillers|un expert|contactez.nous|'
@@ -107,10 +94,8 @@ GPT_PROPOSES_HUMAN = re.compile(
 )
 
 
-# ── Fonctions GPT pour l'international ───────────────────────────────────────
-
+# ── Fonctions GPT ─────────────────────────────────────────────────────────────
 def get_visitor_messages(conv_id: str, db: Session) -> list:
-    """Retourne les derniers messages du visiteur pour détecter la langue."""
     msgs = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id,
         MessageModel.role == "user"
@@ -118,13 +103,6 @@ def get_visitor_messages(conv_id: str, db: Session) -> list:
     return [m.content for m in msgs]
 
 def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) -> str:
-    """
-    Traduit un message canonique dans la langue du visiteur.
-    Prend une liste des derniers messages visiteur pour un contexte fiable.
-    Fonctionne avec TOUTES les langues (japonais, arabe, russe, etc.)
-    Si erreur → retourne le message français (fallback sûr).
-    """
-    # Concaténer les derniers messages visiteur pour détecter la langue de manière fiable
     context = " | ".join(visitor_messages[-3:]) if visitor_messages else ""
     if not context:
         return canonical_msg
@@ -151,11 +129,6 @@ def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) ->
 
 
 def classify_yes_no(visitor_message: str) -> bool:
-    """
-    Classifie si la réponse du visiteur est affirmative.
-    Fonctionne dans TOUTES les langues via GPT.
-    Fallback regex si erreur API.
-    """
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -173,7 +146,6 @@ def classify_yes_no(visitor_message: str) -> bool:
         return "YES" in response.choices[0].message.content.upper()
     except Exception as e:
         print("CLASSIFY ERROR:", e)
-        # Fallback regex basique multilingue
         t = visitor_message.strip().lower()
         negative = re.compile(r'\b(non|no|nope|nein|nee|nej|niet|nao|jamais|never|not)\b', re.IGNORECASE)
         if negative.search(t):
@@ -182,15 +154,11 @@ def classify_yes_no(visitor_message: str) -> bool:
 
 
 def contains_contact_info(message: str) -> bool:
-    """
-    Vérifie si le message contient des coordonnées (au moins quelques chiffres).
-    Un numéro de téléphone contient toujours des chiffres, peu importe le pays.
-    """
     digits = re.sub(r'\D', '', message)
-    return len(digits) >= 6  # numéro de téléphone minimum
+    return len(digits) >= 6
 
 
-# ── Gestion de l'état en base ─────────────────────────────────────────────────
+# ── Gestion état ──────────────────────────────────────────────────────────────
 def get_state(conv_id: str, db: Session) -> str:
     try:
         row = db.execute(
@@ -344,9 +312,11 @@ ADMIN_HTML = """<!DOCTYPE html>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', sans-serif; background: #0f1117; color: #e2e8f0; height: 100vh; overflow: hidden; }
-    #login { display: flex; align-items: center; justify-content: center; height: 100vh; }
-    .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 48px 40px; width: 380px; text-align: center; }
+    body { font-family: 'Inter', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+    /* ── LOGIN ── */
+    #login { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+    .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 40px 32px; width: 100%; max-width: 380px; text-align: center; }
     .logo { width: 52px; height: 52px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 24px; }
     .card h2 { font-size: 22px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; }
     .card .sub { font-size: 14px; color: #64748b; margin-bottom: 28px; }
@@ -357,17 +327,45 @@ ADMIN_HTML = """<!DOCTYPE html>
     .btn-login { width: 100%; padding: 13px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-login:hover { opacity: 0.9; }
     .err { color: #f87171; font-size: 13px; margin-top: 12px; padding: 10px; background: rgba(127,29,29,0.2); border: 1px solid #7f1d1d; border-radius: 8px; display: none; }
-    #dashboard { display: none; height: 100vh; }
+
+    /* ── DASHBOARD ── */
+    #dashboard { display: none; }
+
+    /* ── TOP BAR (mobile) ── */
+    .topbar { display: none; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1a1d27; border-bottom: 1px solid #2d3148; position: sticky; top: 0; z-index: 100; }
+    .topbar-brand { display: flex; align-items: center; gap: 8px; }
+    .topbar-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+    .topbar-name { font-size: 14px; font-weight: 600; color: #f1f5f9; }
+    .btn-menu { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; font-size: 18px; width: 36px; height: 36px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+    /* ── STATS BAR (mobile) ── */
+    .stats-bar { display: none; gap: 8px; padding: 12px 16px; background: #0f1117; border-bottom: 1px solid #2d3148; overflow-x: auto; }
+    .stats-bar::-webkit-scrollbar { display: none; }
+    .stat-pill { background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px; padding: 10px 14px; flex-shrink: 0; text-align: center; min-width: 80px; }
+    .stat-pill .sp-n { display: block; font-size: 20px; font-weight: 700; color: #f1f5f9; line-height: 1; }
+    .stat-pill .sp-l { font-size: 10px; color: #64748b; margin-top: 3px; display: block; }
+    .stat-pill.highlight { border-color: #6366f1; background: rgba(99,102,241,0.08); }
+    .stat-pill.highlight .sp-n { color: #818cf8; }
+    .stat-pill.success .sp-n { color: #34d399; }
+
+    /* ── DESKTOP LAYOUT ── */
     .layout { display: flex; height: 100vh; }
-    .sidebar { width: 280px; background: #1a1d27; border-right: 1px solid #2d3148; display: flex; flex-direction: column; }
+    .sidebar { width: 280px; background: #1a1d27; border-right: 1px solid #2d3148; display: flex; flex-direction: column; flex-shrink: 0; }
     .sb-top { padding: 20px; border-bottom: 1px solid #2d3148; }
     .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
     .brand-icon { width: 32px; height: 32px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; }
     .brand-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
-    .stats { display: flex; gap: 8px; }
-    .stat { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 8px 10px; flex: 1; text-align: center; }
-    .stat-n { display: block; font-size: 18px; font-weight: 700; color: #f1f5f9; }
-    .stat-l { font-size: 11px; color: #64748b; }
+
+    /* Stats desktop — 3 colonnes */
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+    .stat { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 8px 6px; text-align: center; }
+    .stat.highlight { border-color: #6366f1; background: rgba(99,102,241,0.08); }
+    .stat.success { }
+    .stat-n { display: block; font-size: 17px; font-weight: 700; color: #f1f5f9; }
+    .stat.highlight .stat-n { color: #818cf8; }
+    .stat.success .stat-n { color: #34d399; }
+    .stat-l { font-size: 10px; color: #64748b; }
+
     .sb-mid { padding: 12px 16px; border-bottom: 1px solid #2d3148; display: flex; flex-direction: column; gap: 8px; }
     .search-input { width: 100%; padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #f1f5f9; font-size: 13px; font-family: 'Inter', sans-serif; outline: none; }
     .search-input:focus { border-color: #6366f1; }
@@ -388,8 +386,8 @@ ADMIN_HTML = """<!DOCTYPE html>
     .sb-bot { padding: 12px 16px; border-top: 1px solid #2d3148; }
     .btn-logout { width: 100%; padding: 8px; background: transparent; border: 1px solid #2d3148; border-radius: 8px; color: #64748b; font-size: 12px; font-family: 'Inter', sans-serif; cursor: pointer; }
     .btn-logout:hover { border-color: #f87171; color: #f87171; }
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-    .main-hdr { padding: 20px 28px; border-bottom: 1px solid #2d3148; background: #1a1d27; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .main-hdr { padding: 20px 28px; border-bottom: 1px solid #2d3148; background: #1a1d27; flex-shrink: 0; }
     .main-hdr h2 { font-size: 15px; font-weight: 600; color: #f1f5f9; }
     .main-hdr p { font-size: 13px; color: #475569; margin-top: 3px; }
     .msgs-area { flex: 1; overflow-y: auto; padding: 24px 28px; }
@@ -407,9 +405,49 @@ ADMIN_HTML = """<!DOCTYPE html>
     .msg-text { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
     .msg.user .msg-text { background: #312e81; color: #e0e7ff; border-bottom-right-radius: 3px; }
     .msg.assistant .msg-text { background: #1e2035; color: #cbd5e1; border: 1px solid #2d3148; border-bottom-left-radius: 3px; }
+
+    /* ── MOBILE DRAWER ── */
+    .drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; }
+    .drawer { position: fixed; left: 0; top: 0; bottom: 0; width: 300px; background: #1a1d27; border-right: 1px solid #2d3148; z-index: 201; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.25s ease; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-header { padding: 16px; border-bottom: 1px solid #2d3148; display: flex; align-items: center; justify-content: space-between; }
+    .drawer-header .brand { margin-bottom: 0; }
+    .btn-close { background: transparent; border: none; color: #64748b; font-size: 20px; cursor: pointer; padding: 4px; }
+
+    /* ── MOBILE VIEW ── */
+    .mobile-conv-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .mobile-conv-list::-webkit-scrollbar { width: 3px; }
+    .mobile-main { display: none; flex-direction: column; min-height: 0; }
+    .mobile-main.visible { display: flex; flex: 1; }
+    .mobile-msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .btn-back { display: none; align-items: center; gap: 6px; padding: 10px 16px; background: transparent; border: none; border-bottom: 1px solid #2d3148; color: #818cf8; font-size: 14px; font-family: 'Inter', sans-serif; cursor: pointer; width: 100%; text-align: left; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      .layout { display: none !important; }
+      .topbar { display: flex; }
+      .stats-bar { display: flex; }
+      .mobile-main { display: none; }
+      .mobile-main.visible { display: flex; flex-direction: column; }
+      .btn-back { display: flex; }
+      #mobileConvSection { display: block; }
+    }
+
+    @media (min-width: 769px) {
+      .topbar { display: none !important; }
+      .stats-bar { display: none !important; }
+      .drawer-overlay { display: none !important; }
+      .drawer { display: none !important; }
+      #mobileConvSection { display: none !important; }
+      .mobile-main { display: none !important; }
+      .btn-back { display: none !important; }
+      .layout { display: flex !important; height: 100vh; }
+    }
   </style>
 </head>
 <body>
+
+<!-- ══ LOGIN ══ -->
 <div id="login">
   <div class="card">
     <div class="logo">&#129302;</div>
@@ -423,7 +461,76 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="err" id="errMsg">Mot de passe incorrect</div>
   </div>
 </div>
+
+<!-- ══ DASHBOARD ══ -->
 <div id="dashboard">
+
+  <!-- TOP BAR mobile -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-icon">&#129302;</div>
+      <span class="topbar-name" id="topbarName">Replai</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-menu" id="refreshBtnMobile" title="Rafraichir">&#8635;</button>
+      <button class="btn-menu" id="menuBtn">&#9776;</button>
+    </div>
+  </div>
+
+  <!-- STATS BAR mobile -->
+  <div class="stats-bar" id="statsBarMobile">
+    <div class="stat-pill highlight">
+      <span class="sp-n" id="mLeads">0</span>
+      <span class="sp-l">Leads</span>
+    </div>
+    <div class="stat-pill">
+      <span class="sp-n" id="mTotal">0</span>
+      <span class="sp-l">Total</span>
+    </div>
+    <div class="stat-pill success">
+      <span class="sp-n" id="mRate">0%</span>
+      <span class="sp-l">Conversion</span>
+    </div>
+    <div class="stat-pill">
+      <span class="sp-n" id="mMonth">0</span>
+      <span class="sp-l">Ce mois</span>
+    </div>
+  </div>
+
+  <!-- MOBILE: liste conversations -->
+  <div id="mobileConvSection">
+    <div style="padding:10px 16px 4px;border-bottom:1px solid #2d3148;">
+      <input class="search-input" id="searchMobile" placeholder="&#128269; Rechercher..." style="width:100%" />
+    </div>
+    <div class="mobile-conv-list" id="mobileConvList" style="max-height:calc(100vh - 200px);overflow-y:auto;padding:8px"></div>
+  </div>
+
+  <!-- MOBILE: vue conversation -->
+  <div class="mobile-main" id="mobileConvView">
+    <button class="btn-back" id="backBtn">&#8592; Retour aux conversations</button>
+    <div style="padding:14px 16px;border-bottom:1px solid #2d3148;background:#1a1d27;">
+      <div style="font-size:14px;font-weight:600;color:#f1f5f9" id="mobileHdrTitle">Conversation</div>
+      <div style="font-size:12px;color:#475569;margin-top:2px" id="mobileHdrSub"></div>
+    </div>
+    <div class="mobile-msgs" id="mobileMsgs"></div>
+  </div>
+
+  <!-- DRAWER (liste convs sur mobile) -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="brand">
+        <div class="brand-icon">&#129302;</div>
+        <span class="brand-name" id="drawerName">Replai</span>
+      </div>
+      <button class="btn-close" id="closeDrawer">&#10005;</button>
+    </div>
+    <div style="padding:10px 12px;border-bottom:1px solid #2d3148">
+      <button class="btn-logout" id="logoutBtnMobile">Se deconnecter</button>
+    </div>
+  </div>
+
+  <!-- DESKTOP LAYOUT -->
   <div class="layout">
     <div class="sidebar">
       <div class="sb-top">
@@ -431,9 +538,30 @@ ADMIN_HTML = """<!DOCTYPE html>
           <div class="brand-icon">&#129302;</div>
           <span class="brand-name" id="businessName">Replai</span>
         </div>
-        <div class="stats">
-          <div class="stat"><span class="stat-n" id="totalN">0</span><span class="stat-l">Total</span></div>
-          <div class="stat"><span class="stat-n" id="urgentN">0</span><span class="stat-l">Urgents</span></div>
+        <!-- Stats 3 colonnes -->
+        <div class="stats-grid">
+          <div class="stat highlight">
+            <span class="stat-n" id="leadsN">0</span>
+            <span class="stat-l">Leads</span>
+          </div>
+          <div class="stat">
+            <span class="stat-n" id="totalN">0</span>
+            <span class="stat-l">Total</span>
+          </div>
+          <div class="stat success">
+            <span class="stat-n" id="rateN">0%</span>
+            <span class="stat-l">Conv.</span>
+          </div>
+        </div>
+        <div class="stats-grid" style="margin-top:6px">
+          <div class="stat" style="grid-column:1/2">
+            <span class="stat-n" id="monthN">0</span>
+            <span class="stat-l">Ce mois</span>
+          </div>
+          <div class="stat" style="grid-column:2/4">
+            <span class="stat-n" id="urgentN">0</span>
+            <span class="stat-l">A rappeler</span>
+          </div>
         </div>
       </div>
       <div class="sb-mid">
@@ -459,97 +587,217 @@ ADMIN_HTML = """<!DOCTYPE html>
     </div>
   </div>
 </div>
+
 <script>
 var token = localStorage.getItem("wt") || "";
 var clientToken = new URLSearchParams(window.location.search).get("token") || "";
 var activeId = null;
 var allConvs = [];
+var isMobile = function() { return window.innerWidth <= 768; };
+
 if (!clientToken) {
   document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif'>Token manquant dans l URL</div>";
 }
 if (token && clientToken) doVerify();
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
 document.getElementById("eyeBtn").onclick = function() {
   var i = document.getElementById("pwd");
   i.type = i.type === "password" ? "text" : "password";
 };
 document.getElementById("loginBtn").onclick = doLogin;
 document.getElementById("pwd").onkeydown = function(e) { if (e.key==="Enter") doLogin(); };
-document.getElementById("refreshBtn").onclick = loadConvs;
-document.getElementById("logoutBtn").onclick = doLogout;
-document.getElementById("searchInput").oninput = function() { renderConvList(filterConvs(this.value)); };
+
 function doVerify() {
   fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:token,client_token:clientToken})})
-  .then(function(r){if(r.ok)r.json().then(function(d){showDash(d.business_name);}); else{token="";localStorage.removeItem("wt");}});
+  .then(function(r){ if(r.ok) r.json().then(function(d){ showDash(d.business_name); }); else { token=""; localStorage.removeItem("wt"); } });
 }
+
 function doLogin() {
-  var pwd=document.getElementById("pwd").value;
-  var err=document.getElementById("errMsg");
-  err.style.display="none";
+  var pwd = document.getElementById("pwd").value;
+  var err = document.getElementById("errMsg");
+  err.style.display = "none";
   fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd,client_token:clientToken})})
   .then(function(r){
-    if(r.ok)r.json().then(function(d){token=pwd;localStorage.setItem("wt",pwd);showDash(d.business_name);});
-    else err.style.display="block";
-  }).catch(function(){err.style.display="block";err.innerText="Erreur reseau";});
+    if(r.ok) r.json().then(function(d){ token=pwd; localStorage.setItem("wt",pwd); showDash(d.business_name); });
+    else err.style.display = "block";
+  }).catch(function(){ err.style.display="block"; err.innerText="Erreur reseau"; });
 }
+
 function showDash(name) {
-  document.getElementById("login").style.display="none";
-  document.getElementById("dashboard").style.display="block";
-  if(name) document.getElementById("businessName").innerText=name;
+  document.getElementById("login").style.display = "none";
+  document.getElementById("dashboard").style.display = "block";
+  // Noms
+  if(name) {
+    document.getElementById("businessName").innerText = name;
+    document.getElementById("topbarName").innerText = name;
+    document.getElementById("drawerName").innerText = name;
+  }
   loadConvs();
 }
+
 function doLogout() {
-  localStorage.removeItem("wt"); token="";
-  document.getElementById("dashboard").style.display="none";
-  document.getElementById("login").style.display="flex";
-  document.getElementById("pwd").value="";
+  localStorage.removeItem("wt"); token = "";
+  document.getElementById("dashboard").style.display = "none";
+  document.getElementById("login").style.display = "flex";
+  document.getElementById("pwd").value = "";
 }
+
+document.getElementById("logoutBtn").onclick = doLogout;
+document.getElementById("logoutBtnMobile").onclick = doLogout;
+
+// ── Menu mobile ───────────────────────────────────────────────────────────────
+document.getElementById("menuBtn").onclick = function() {
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("drawerOverlay").style.display = "block";
+};
+document.getElementById("closeDrawer").onclick = closeDrawer;
+document.getElementById("drawerOverlay").onclick = closeDrawer;
+function closeDrawer() {
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("drawerOverlay").style.display = "none";
+}
+
+// ── Refresh ───────────────────────────────────────────────────────────────────
+document.getElementById("refreshBtn").onclick = loadConvs;
+document.getElementById("refreshBtnMobile").onclick = loadConvs;
+
+// ── Recherche ─────────────────────────────────────────────────────────────────
+document.getElementById("searchInput").oninput = function() { renderConvList(filterConvs(this.value)); };
+document.getElementById("searchMobile").oninput = function() { renderConvList(filterConvs(this.value)); };
+
+// ── Back mobile ───────────────────────────────────────────────────────────────
+document.getElementById("backBtn").onclick = function() {
+  document.getElementById("mobileConvView").classList.remove("visible");
+  document.getElementById("mobileConvSection").style.display = "block";
+  document.getElementById("statsBarMobile").style.display = "flex";
+};
+
+// ── Chargement conversations ──────────────────────────────────────────────────
 function loadConvs() {
-  fetch("/admin/conversations?client_token="+clientToken,{headers:{"X-Admin-Password":token}})
-  .then(function(r){return r.json();}).then(function(data){allConvs=data;renderConvList(data);});
+  fetch("/admin/conversations?client_token="+clientToken, {headers:{"X-Admin-Password":token}})
+  .then(function(r){ return r.json(); })
+  .then(function(data){ allConvs = data; renderConvList(data); });
 }
+
 function filterConvs(q) {
   if(!q) return allConvs;
-  q=q.toLowerCase();
-  return allConvs.filter(function(c){return c.id.toLowerCase().includes(q);});
+  q = q.toLowerCase();
+  return allConvs.filter(function(c){ return c.id.toLowerCase().includes(q); });
 }
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function computeStats(data) {
+  var total = data.length;
+  var leads = data.filter(function(c){ return c.needs_human; }).length;
+  var urgent = leads; // needs_human = a rappeler
+  var rate = total > 0 ? Math.round((leads / total) * 100) : 0;
+
+  // Ce mois : created_at commence par YYYY-MM courant
+  var now = new Date();
+  var ym = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+  var month = data.filter(function(c){ return c.created_at && c.created_at.startsWith(ym); }).length;
+
+  return { total: total, leads: leads, urgent: urgent, rate: rate, month: month };
+}
+
+function updateStats(data) {
+  var s = computeStats(data);
+  // Desktop
+  document.getElementById("totalN").innerText = s.total;
+  document.getElementById("leadsN").innerText = s.leads;
+  document.getElementById("urgentN").innerText = s.urgent;
+  document.getElementById("rateN").innerText = s.rate + "%";
+  document.getElementById("monthN").innerText = s.month;
+  // Mobile
+  document.getElementById("mTotal").innerText = s.total;
+  document.getElementById("mLeads").innerText = s.leads;
+  document.getElementById("mRate").innerText = s.rate + "%";
+  document.getElementById("mMonth").innerText = s.month;
+}
+
+// ── Rendu liste ───────────────────────────────────────────────────────────────
 function renderConvList(data) {
-  var list=document.getElementById("convList");
-  list.innerHTML="";
-  var urgent=allConvs.filter(function(c){return c.needs_human;}).length;
-  document.getElementById("totalN").innerText=allConvs.length;
-  document.getElementById("urgentN").innerText=urgent;
-  if(!data.length){list.innerHTML="<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";return;}
-  data.forEach(function(conv){
-    var div=document.createElement("div");
-    var cls="ci"+(conv.needs_human?" urgent":"")+(conv.id===activeId?" active":"");
-    div.className=cls;
-    var contact=conv.contact_info?"<div class='contact-info'>&#128222; "+conv.contact_info+"</div>":"";
-    div.innerHTML="<div class='ci-top'><span class='ci-id'>#"+conv.id.slice(0,8)+"</span>"+(conv.needs_human?"<span class='badge'>RAPPELER</span>":"")+"</div>"
+  updateStats(allConvs); // stats toujours sur toutes les convs
+
+  // Desktop
+  var list = document.getElementById("convList");
+  list.innerHTML = "";
+
+  // Mobile
+  var mlist = document.getElementById("mobileConvList");
+  mlist.innerHTML = "";
+
+  if(!data.length) {
+    var empty = "<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";
+    list.innerHTML = empty;
+    mlist.innerHTML = empty;
+    return;
+  }
+
+  data.forEach(function(conv) {
+    var contact = conv.contact_info ? "<div class='contact-info'>&#128222; "+conv.contact_info+"</div>" : "";
+    var inner = "<div class='ci-top'><span class='ci-id'>#"+conv.id.slice(0,8)+"</span>"
+      +(conv.needs_human?"<span class='badge'>RAPPELER</span>":"")+"</div>"
       +"<div class='ci-meta'>"+conv.created_at+" &middot; "+conv.message_count+" msg</div>"+contact;
-    div.onclick=function(){loadConv(conv.id,div);};
+
+    // Desktop
+    var div = document.createElement("div");
+    div.className = "ci"+(conv.needs_human?" urgent":"")+(conv.id===activeId?" active":"");
+    div.innerHTML = inner;
+    div.onclick = (function(id, el){ return function(){ loadConv(id, el, false); }; })(conv.id, div);
     list.appendChild(div);
+
+    // Mobile
+    var mdiv = document.createElement("div");
+    mdiv.className = "ci"+(conv.needs_human?" urgent":"");
+    mdiv.innerHTML = inner;
+    mdiv.onclick = (function(id){ return function(){ loadConv(id, null, true); }; })(conv.id);
+    mlist.appendChild(mdiv);
   });
 }
-function loadConv(id,el) {
-  activeId=id;
-  document.querySelectorAll(".ci").forEach(function(x){x.classList.remove("active");});
-  if(el) el.classList.add("active");
-  document.getElementById("hdrTitle").innerText="Conversation #"+id.slice(0,8);
-  document.getElementById("hdrSub").innerText="Historique complet";
-  fetch("/admin/conversations/"+id+"?client_token="+clientToken,{headers:{"X-Admin-Password":token}})
-  .then(function(r){return r.json();}).then(function(data){
-    var area=document.getElementById("msgsArea");
-    area.innerHTML="<div class='msgs-wrap' id='msgsWrap'></div>";
-    var wrap=document.getElementById("msgsWrap");
-    data.forEach(function(msg){
-      var div=document.createElement("div");
-      div.className="msg "+msg.role;
-      var who=msg.role==="user"?"Visiteur":"Assistant IA";
-      div.innerHTML="<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.split("\\n").join("<br>")+"</div>";
-      wrap.appendChild(div);
-    });
-    area.scrollTop=area.scrollHeight;
+
+// ── Chargement conversation ───────────────────────────────────────────────────
+function loadConv(id, el, mobile) {
+  activeId = id;
+  if(!mobile) {
+    document.querySelectorAll("#convList .ci").forEach(function(x){ x.classList.remove("active"); });
+    if(el) el.classList.add("active");
+    document.getElementById("hdrTitle").innerText = "Conversation #"+id.slice(0,8);
+    document.getElementById("hdrSub").innerText = "Historique complet";
+  } else {
+    document.getElementById("mobileConvSection").style.display = "none";
+    document.getElementById("statsBarMobile").style.display = "none";
+    var view = document.getElementById("mobileConvView");
+    view.classList.add("visible");
+    document.getElementById("mobileHdrTitle").innerText = "Conversation #"+id.slice(0,8);
+    document.getElementById("mobileHdrSub").innerText = "Historique complet";
+  }
+
+  fetch("/admin/conversations/"+id+"?client_token="+clientToken, {headers:{"X-Admin-Password":token}})
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if(!mobile) {
+      var area = document.getElementById("msgsArea");
+      area.innerHTML = "<div class='msgs-wrap' id='msgsWrap'></div>";
+      var wrap = document.getElementById("msgsWrap");
+      data.forEach(function(msg){ wrap.appendChild(buildMsg(msg)); });
+      area.scrollTop = area.scrollHeight;
+    } else {
+      var mmsgs = document.getElementById("mobileMsgs");
+      mmsgs.innerHTML = "";
+      data.forEach(function(msg){ mmsgs.appendChild(buildMsg(msg)); });
+      mmsgs.scrollTop = mmsgs.scrollHeight;
+    }
   });
+}
+
+function buildMsg(msg) {
+  var div = document.createElement("div");
+  div.className = "msg " + msg.role;
+  var who = msg.role === "user" ? "Visiteur" : "Assistant IA";
+  div.innerHTML = "<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.split("\\n").join("<br>")+"</div>";
+  return div;
 }
 </script>
 </body>
@@ -583,7 +831,6 @@ def admin_conversations(client_token: str, request: Request, db: Session = Depen
         msgs = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).order_by(MessageModel.created_at).all()
         state = get_state(conv.id, db)
         needs_human = state == STATE_DONE
-        # Le contact = le message user qui contient 6+ chiffres apres une demande de coordonnees
         contact_info = None
         for m in msgs:
             if m.role == "user":
@@ -620,7 +867,6 @@ def admin_conversation_detail(conv_id: str, client_token: str, request: Request,
 
 @app.post("/contact-human")
 def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
-    """Bouton 'Parler à un humain' → passe directement à l'état ASKING"""
     conv_id = req.conversation_id or str(uuid.uuid4())
     client_token = req.client_token or ""
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
@@ -628,11 +874,8 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
         conv = Conversation(id=conv_id, title="Conversation client", client_token=client_token)
         db.add(conv)
         db.commit()
-
-    # Traduit dans la langue du dernier message visiteur (si existe)
     visitor_msgs = get_visitor_messages(conv_id, db)
     reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs) if visitor_msgs else MSG_ASKING
-
     set_state(conv_id, STATE_ASKING, db)
     save_message(conv_id, "assistant", reply, db)
     return bot_reply(reply, conv_id, False)
@@ -652,12 +895,10 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     save_message(conv_id, "user", msg.message, db)
     state = get_state(conv_id, db)
-    visitor_msgs = get_visitor_messages(conv_id, db)  # pour détecter la langue
+    visitor_msgs = get_visitor_messages(conv_id, db)
 
-    # ── ÉTAT ASKING : on attend les coordonnées ────────────────────────────────
     if state == STATE_ASKING:
         if contains_contact_info(msg.message):
-            # Coordonnées valides (contient un numéro de téléphone)
             if c:
                 send_human_email(conv_id, msg.message, c)
             set_state(conv_id, STATE_DONE, db)
@@ -665,12 +906,10 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, True)
         else:
-            # Pas de numéro → re-demander dans la langue du visiteur
             reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
 
-    # ── ÉTAT PROPOSED : visiteur répond oui/non ────────────────────────────────
     if state == STATE_PROPOSED:
         if classify_yes_no(msg.message):
             set_state(conv_id, STATE_ASKING, db)
@@ -683,15 +922,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
 
-    # ── ÉTAT NORMAL ────────────────────────────────────────────────────────────
-    # Détection explicite : le visiteur demande un humain
     if HUMAN_REGEX.search(msg.message):
         set_state(conv_id, STATE_PROPOSED, db)
         reply = translate_to_visitor_language(MSG_PROPOSAL, visitor_msgs)
         save_message(conv_id, "assistant", reply, db)
         return bot_reply(reply, conv_id, False)
 
-    # Appel GPT normal
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
@@ -722,7 +958,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     )
     reply = response.choices[0].message.content
 
-    # Si GPT propose spontanément un humain → passer à l'état PROPOSED
     if GPT_PROPOSES_HUMAN.search(reply):
         set_state(conv_id, STATE_PROPOSED, db)
 
