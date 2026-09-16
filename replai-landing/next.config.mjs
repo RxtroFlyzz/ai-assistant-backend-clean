@@ -18,12 +18,12 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value:
               "default-src 'self'; " +
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://ai-assistant-backend-clean-iz6y.onrender.com; " +
               "style-src 'self' 'unsafe-inline' https://api.fontshare.com; " +
               "font-src 'self' https://api.fontshare.com; " +
               "media-src 'self' https://d8j0ntlcm91z4.cloudfront.net; " +
               "img-src 'self' data: blob: https:; " +
-              "connect-src 'self';",
+              "connect-src 'self' https://ai-assistant-backend-clean-iz6y.onrender.com;",
           },
         ],
       },
