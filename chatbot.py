@@ -9,6 +9,9 @@ from sqlalchemy import text
 import uuid
 import os
 import re
+import time
+import html as html_lib
+import httpx
 import resend
 from datetime import datetime
 
@@ -36,14 +39,22 @@ Base.metadata.create_all(bind=engine)
 
 
 # ── Migration automatique ─────────────────────────────────────────────────────
+MIGRATIONS = [
+    ("conversations.state", "ALTER TABLE conversations ADD COLUMN state VARCHAR DEFAULT 'normal'"),
+    ("clients.shop_url",    "ALTER TABLE clients ADD COLUMN shop_url VARCHAR"),
+]
+
 def run_migrations():
-    with engine.connect() as conn:
+    # Une connexion par migration : sous Postgres, un ALTER qui echoue (colonne
+    # deja presente) annule toute la transaction, ce qui ferait echouer les suivants.
+    for name, sql in MIGRATIONS:
         try:
-            conn.execute(text("ALTER TABLE conversations ADD COLUMN state VARCHAR DEFAULT 'normal'"))
-            conn.commit()
-            print("Migration OK: colonne state ajoutee")
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+                print("Migration OK:", name)
         except Exception:
-            pass
+            pass  # colonne deja presente
 
 run_migrations()
 
@@ -227,6 +238,118 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
         print("EMAIL ERROR:", str(e))
 
 
+# ── Catalogue Shopify automatique ─────────────────────────────────────────────
+# Chaque boutique Shopify expose publiquement /products.json (sans cle API).
+# On le lit, on le met en cache, et on l'injecte dans le prompt : les nouveaux
+# drops, prix et ruptures de stock sont connus du bot sans intervention.
+CATALOG_TTL = 1800          # secondes (30 min)
+CATALOG_MAX_CHARS = 8000    # limite pour ne pas exploser le prompt
+CATALOG_CACHE = {}          # shop_url -> (timestamp, texte)
+
+
+def normalize_shop_url(url: str) -> str:
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    return url
+
+
+def get_shop_url(token: str, db: Session) -> str:
+    try:
+        row = db.execute(
+            text("SELECT shop_url FROM clients WHERE token = :t"), {"t": token}
+        ).fetchone()
+        return row[0] if row and row[0] else ""
+    except Exception as e:
+        print("GET_SHOP_URL ERROR:", e)
+        db.rollback()
+        return ""
+
+
+def set_shop_url(token: str, url: str, db: Session):
+    db.execute(
+        text("UPDATE clients SET shop_url = :u WHERE token = :t"),
+        {"u": normalize_shop_url(url) or None, "t": token}
+    )
+    db.commit()
+
+
+def strip_html(raw: str) -> str:
+    no_tags = re.sub(r"<[^>]+>", " ", raw or "")
+    return re.sub(r"\s+", " ", html_lib.unescape(no_tags)).strip()
+
+
+def format_catalog(products: list, shop_url: str) -> str:
+    lines = []
+    for p in products:
+        variants = p.get("variants") or []
+        if not variants:
+            continue
+        prices = [float(v["price"]) for v in variants if v.get("price")]
+        compares = [float(v["compare_at_price"]) for v in variants if v.get("compare_at_price")]
+        price = min(prices) if prices else None
+        line = "- " + (p.get("title") or "Produit")
+        if price is not None:
+            line += " : %.2f EUR" % price
+            if compares and max(compares) > price:
+                line += " (au lieu de %.2f EUR)" % max(compares)
+        # Un seul variant "Default Title" = produit sans taille/couleur
+        if len(variants) == 1 and variants[0].get("title") == "Default Title":
+            line += " | " + ("en stock" if variants[0].get("available") else "RUPTURE DE STOCK")
+        else:
+            dispo = [v.get("title") for v in variants if v.get("available")]
+            epuise = [v.get("title") for v in variants if not v.get("available")]
+            if not dispo:
+                line += " | RUPTURE DE STOCK (toutes tailles)"
+            else:
+                line += " | disponible : " + ", ".join(dispo)
+                if epuise:
+                    line += " | epuise : " + ", ".join(epuise)
+        desc = strip_html(p.get("body_html", ""))
+        if desc:
+            line += " | " + desc[:250]
+        if p.get("handle"):
+            line += " | " + shop_url + "/products/" + p["handle"]
+        lines.append(line)
+    out = "\n".join(lines)
+    if len(out) > CATALOG_MAX_CHARS:
+        out = out[:CATALOG_MAX_CHARS].rsplit("\n", 1)[0] + "\n(... catalogue tronque)"
+    return out
+
+
+def get_catalog_text(shop_url: str) -> str:
+    """Catalogue formate, avec cache. En cas d'erreur, renvoie la derniere
+    version connue (ou "" si aucune) : le chat ne doit jamais planter a cause de Shopify."""
+    if not shop_url:
+        return ""
+    now = time.time()
+    cached = CATALOG_CACHE.get(shop_url)
+    if cached and now - cached[0] < CATALOG_TTL:
+        return cached[1]
+    try:
+        r = httpx.get(
+            shop_url + "/products.json",
+            params={"limit": 250},
+            timeout=5.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Replai-Catalog/1.0"},
+        )
+        r.raise_for_status()
+        catalog = format_catalog(r.json().get("products", []), shop_url)
+        CATALOG_CACHE[shop_url] = (now, catalog)
+        print("CATALOG OK:", shop_url, len(catalog), "chars")
+        return catalog
+    except Exception as e:
+        print("CATALOG ERROR:", shop_url, e)
+        # On garde l'ancienne version (ou rien) et on ne reessaie que dans 5 min,
+        # pour ne pas ralentir chaque message si la boutique est injoignable.
+        previous = cached[1] if cached else ""
+        CATALOG_CACHE[shop_url] = (now - CATALOG_TTL + 300, previous)
+        return previous
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str
@@ -242,6 +365,7 @@ class CreateClientRequest(BaseModel):
     business_name: str
     admin_password: str
     client_email: Optional[str] = None
+    shop_url: Optional[str] = None
     superadmin_password: str
 
 class UpdateClientRequest(BaseModel):
@@ -251,6 +375,7 @@ class UpdateClientRequest(BaseModel):
     business_name: Optional[str] = None
     admin_password: Optional[str] = None
     client_email: Optional[str] = None
+    shop_url: Optional[str] = None  # "" pour desactiver le catalogue
 
 
 # ── Super-admin ───────────────────────────────────────────────────────────────
@@ -267,9 +392,12 @@ def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
     )
     db.add(new_client)
     db.commit()
+    if req.shop_url:
+        set_shop_url(token, req.shop_url, db)
     return {
         "token": token,
         "business_name": req.business_name,
+        "shop_url": normalize_shop_url(req.shop_url or "") or None,
         "admin_url": "/admin?token=" + token,
         "widget_script": '<script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=' + token + '"></script>'
     }
@@ -291,15 +419,33 @@ def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
     if req.client_email is not None:
         c.client_email = req.client_email
     db.commit()
-    return {"ok": True, "token": c.token}
+    if req.shop_url is not None:
+        set_shop_url(c.token, req.shop_url, db)
+    return {"ok": True, "token": c.token, "shop_url": get_shop_url(c.token, db) or None}
 
 
 @app.get("/superadmin/clients")
 def list_clients(superadmin_password: str, db: Session = Depends(get_db)):
     if superadmin_password != SUPERADMIN_PASSWORD:
         raise HTTPException(status_code=401)
-    return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email}
+    return [{"token": c.token, "business_name": c.business_name, "client_email": c.client_email,
+             "shop_url": get_shop_url(c.token, db) or None}
             for c in db.query(Client).all()]
+
+
+@app.get("/superadmin/catalog-preview")
+def catalog_preview(token: str, superadmin_password: str, refresh: bool = False,
+                    db: Session = Depends(get_db)):
+    """Montre exactement le catalogue que le bot recoit pour ce client."""
+    if superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    shop_url = get_shop_url(token, db)
+    if not shop_url:
+        raise HTTPException(status_code=404, detail="Pas de shop_url pour ce client")
+    if refresh:
+        CATALOG_CACHE.pop(shop_url, None)
+    catalog = get_catalog_text(shop_url)
+    return {"shop_url": shop_url, "chars": len(catalog), "catalog": catalog}
 
 
 # ── Dashboard Admin ───────────────────────────────────────────────────────────
@@ -936,6 +1082,15 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         base_prompt = c.system_prompt
     else:
         base_prompt = "Tu es un assistant virtuel professionnel."
+
+    if c:
+        catalog = get_catalog_text(get_shop_url(c.token, db))
+        if catalog:
+            base_prompt += (
+                "\n\nCATALOGUE EN TEMPS REEL (source de verite pour les produits, prix et stocks : "
+                "si une autre information du prompt contredit ce catalogue, c'est le catalogue qui a raison. "
+                "Ne propose jamais un produit ou une taille absent ou epuise) :\n" + catalog
+            )
 
     if msg.page_content:
         base_prompt += "\n\nCONTENU SUPPLEMENTAIRE DU SITE :\n" + msg.page_content
