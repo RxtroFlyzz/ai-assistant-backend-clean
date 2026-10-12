@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Script from "next/script";
+import ReplaiWidget from "./components/ReplaiWidget";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -36,10 +36,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         {children}
-        <Script
-          src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=replai_cb23fd"
-          strategy="afterInteractive"
-        />
+        <ReplaiWidget />
       </body>
     </html>
   );
