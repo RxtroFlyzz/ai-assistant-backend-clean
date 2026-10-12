@@ -420,6 +420,21 @@ def _to_hex(value: str) -> Optional[str]:
         else:
             return None
         return "#" + h.lower() if re.fullmatch(r"[0-9a-fA-F]{6}", h) else None
+    m = re.fullmatch(r"rgba?\(\s*(.*?)\s*\)", v, re.I)
+    if m:
+        # rgb(18, 18, 18) / rgba(18,18,18,0.5) / rgb(18 18 18 / 1.0)  (themes Horizon)
+        inner = m.group(1).replace("/", " ").replace(",", " ").split()
+        if len(inner) >= 3 and all(x.isdigit() for x in inner[:3]):
+            if len(inner) >= 4:
+                try:
+                    alpha = float(inner[3].rstrip("%")) / (100 if inner[3].endswith("%") else 1)
+                    if alpha < 0.5:
+                        return None
+                except ValueError:
+                    return None
+            v = ",".join(inner[:3])
+        else:
+            return None
     parts = [p.strip() for p in v.split(",")]
     if len(parts) == 3 and all(p.isdigit() and int(p) <= 255 for p in parts):
         return "#" + "".join("%02x" % int(p) for p in parts)
@@ -431,7 +446,10 @@ def _luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-CSS_VAR_RE = re.compile(r"--([A-Za-z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8}|\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3})\s*[;}]")
+CSS_VAR_RE = re.compile(r"--([A-Za-z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3})\s*(?:!important\s*)?[;}]", re.I)
+# Themes plus anciens : pas de variables, une regle .btn { background: ... } dans le CSS
+BTN_RULE_RE = re.compile(r"\.(?:btn|button|shopify-payment-button__button)(?:--primary|-primary)?\b[^{,]*\{[^}]*?background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))", re.I)
+STYLESHEET_RE = re.compile(r"<link[^>]+href=[\"']([^\"']+\.css[^\"']*)[\"']", re.I)
 META_THEME_RE = re.compile(r"<meta[^>]+name=[\"']theme-color[\"'][^>]*content=[\"']([^\"']+)[\"']", re.I)
 ACCENT_EXCLUDE = ("text", "label", "border", "shadow", "secondary", "outline", "hover",
                   "foreground", "link", "disabled", "badge", "sale", "error", "success")
@@ -458,6 +476,12 @@ def detect_theme_from_html(page: str) -> dict:
         if meta and _luminance(meta) < 0.92:
             color = meta
     color = color or first(lambda n: "accent" in n) or first(lambda n: "primary" in n)
+    if not color:
+        for raw in BTN_RULE_RE.findall(page):
+            hx = _to_hex(raw)
+            if hx and _luminance(hx) < 0.92:
+                color = hx
+                break
 
     mode = "light"
     for wanted in BACKGROUND_NAMES:
@@ -472,7 +496,30 @@ def detect_shop_theme(shop_url: str) -> dict:
     r = httpx.get(shop_url, timeout=8.0, follow_redirects=True,
                   headers={"User-Agent": "Mozilla/5.0 (compatible; Replai-Theme/1.0)"})
     r.raise_for_status()
-    return detect_theme_from_html(r.text)
+    page = r.text
+    found = detect_theme_from_html(page)
+    if found["color"]:
+        return found
+    # Couleurs absentes de la page : on regarde les feuilles de style du theme
+    css = []
+    for href in STYLESHEET_RE.findall(page)[:12]:
+        if not ("/cdn/shop/" in href or "/assets/" in href or "cdn.shopify.com" in href):
+            continue
+        url = "https:" + href if href.startswith("//") else str(httpx.URL(str(r.url)).join(href))
+        try:
+            rc = httpx.get(url, timeout=6.0, follow_redirects=True,
+                           headers={"User-Agent": "Mozilla/5.0 (compatible; Replai-Theme/1.0)"})
+            if rc.status_code == 200:
+                css.append(rc.text[:400000])
+        except Exception:
+            pass
+        if len(css) >= 3:
+            break
+    if css:
+        extra = detect_theme_from_html("\n".join(css))
+        if extra["color"]:
+            found["color"] = extra["color"]
+    return found
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
