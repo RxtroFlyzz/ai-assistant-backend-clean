@@ -311,6 +311,7 @@
         message: text,
         conversation_id: state.c,
         page_content: getPageContent(),
+        page_url: window.location.href,
         client_token: CLIENT_TOKEN
       })
     }).then(function(res) {

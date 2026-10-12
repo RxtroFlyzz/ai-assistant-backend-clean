@@ -458,6 +458,80 @@ def get_catalog_text(shop_url: str) -> str:
         return previous
 
 
+# ── Infos generales de la boutique (accueil + conditions) ────────────────────
+# Le catalogue ne dit rien de la newsletter, des reseaux sociaux ou des
+# conditions de livraison : on lit la page d'accueil et les pages de conditions
+# Shopify, avec un cache long (ces infos changent rarement).
+SITE_INFO_TTL = 6 * 3600
+SITE_INFO_CACHE = {}        # shop_url -> (timestamp, texte)
+SOCIAL_RE = re.compile(r"href=[\"'](https?://(?:www\.)?(instagram\.com|tiktok\.com|facebook\.com|youtube\.com|x\.com|twitter\.com|pinterest\.[a-z.]+)/[^\"'?#]*)", re.I)
+POLICY_PAGES = [("Livraison", "/policies/shipping-policy"), ("Retours et remboursements", "/policies/refund-policy")]
+
+
+def html_to_text(page: str) -> str:
+    page = re.sub(r"(?is)<(script|style|noscript|svg|template|iframe)[^>]*>.*?</\1>", " ", page or "")
+    page = re.sub(r"(?is)<!--.*?-->", " ", page)
+    return strip_html(page)
+
+
+def _fetch(url: str, timeout: float = 4.0) -> str:
+    r = httpx.get(url, timeout=timeout, follow_redirects=True,
+                  headers={"User-Agent": "Mozilla/5.0 (compatible; Replai-Info/1.0)"})
+    r.raise_for_status()
+    return r.text
+
+
+def build_site_info(shop_url: str) -> str:
+    parts = []
+    try:
+        home = _fetch(shop_url)
+        socials = []
+        for url, net in SOCIAL_RE.findall(home):
+            if url.rstrip("/").count("/") >= 3 and url not in socials:
+                socials.append(url.rstrip("/"))
+        text = html_to_text(home)
+        # Le haut (bandeau, accroche) et le bas (newsletter, contact) sont les plus utiles
+        excerpt = text if len(text) <= 2800 else text[:1200] + " (...) " + text[-1600:]
+        parts.append("PAGE D'ACCUEIL (extrait) : " + excerpt)
+        if re.search(r"newsletter|contact\[tags\]|inscri(vez|ption)|subscribe|abonnez", home, re.I):
+            parts.append("NEWSLETTER : le site propose une inscription a la newsletter (formulaire sur le site, generalement en bas de page).")
+        if socials:
+            parts.append("RESEAUX SOCIAUX : " + ", ".join(socials[:6]))
+    except Exception as e:
+        print("SITE INFO HOME ERROR:", shop_url, e)
+    for label, path in POLICY_PAGES:
+        try:
+            t = html_to_text(_fetch(shop_url + path))
+            if len(t) > 40:
+                parts.append(label.upper() + " (conditions officielles) : " + t[:2000])
+        except Exception:
+            pass
+    return "\n".join(parts)[:7500]
+
+
+def get_site_info(shop_url: str) -> str:
+    if not shop_url:
+        return ""
+    now = time.time()
+    cached = SITE_INFO_CACHE.get(shop_url)
+    if cached and now - cached[0] < SITE_INFO_TTL:
+        return cached[1]
+    info = build_site_info(shop_url)
+    if info:
+        SITE_INFO_CACHE[shop_url] = (now, info)
+        return info
+    previous = cached[1] if cached else ""
+    SITE_INFO_CACHE[shop_url] = (now - SITE_INFO_TTL + 1800, previous)   # reessai dans 30 min
+    return previous
+
+
+def _host(url: str) -> str:
+    try:
+        return httpx.URL(url).host.lower().removeprefix("www.")
+    except Exception:
+        return ""
+
+
 # ── Apparence du widget par client ────────────────────────────────────────────
 # Stockee en JSON dans clients.widget_config :
 #   color (#rrggbb), mode ("light" | "dark"), assistant_name, welcome
@@ -603,6 +677,7 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     page_content: Optional[str] = None
+    page_url: Optional[str] = None
     client_token: Optional[str] = None
 
 class ContactHumanRequest(BaseModel):
@@ -1416,8 +1491,23 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
                 "Ne propose jamais un produit ou une taille absent ou epuise) :\n" + catalog
             )
 
-    if msg.page_content:
-        base_prompt += "\n\nCONTENU SUPPLEMENTAIRE DU SITE :\n" + msg.page_content
+    shop_url = get_shop_url(c.token, db) if c else ""
+    if shop_url:
+        site_info = get_site_info(shop_url)
+        if site_info:
+            base_prompt += (
+                "\n\nINFOS DU SITE DE LA BOUTIQUE (newsletter, reseaux, livraison, retours). "
+                "Utilise-les pour repondre ; si la premiere partie de ce prompt les contredit, "
+                "c'est la premiere partie qui a raison :\n" + site_info
+            )
+
+    # Le texte de la page n'est utile que si le visiteur est sur le site du client
+    # (sur la page demo d'aireply.fr, ce serait le texte marketing de Replai).
+    page_ok = bool(msg.page_content)
+    if page_ok and shop_url and msg.page_url and _host(msg.page_url) != _host(shop_url):
+        page_ok = False
+    if page_ok:
+        base_prompt += "\n\nCONTENU DE LA PAGE CONSULTEE PAR LE VISITEUR :\n" + msg.page_content
 
     base_prompt += (
         "\n\nREGLES :\n"
