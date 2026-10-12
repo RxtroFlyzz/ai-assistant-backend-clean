@@ -10,6 +10,7 @@ import uuid
 import os
 import re
 import time
+import json
 import html as html_lib
 import httpx
 import resend
@@ -42,6 +43,7 @@ Base.metadata.create_all(bind=engine)
 MIGRATIONS = [
     ("conversations.state", "ALTER TABLE conversations ADD COLUMN state VARCHAR DEFAULT 'normal'"),
     ("clients.shop_url",    "ALTER TABLE clients ADD COLUMN shop_url VARCHAR"),
+    ("clients.widget_config", "ALTER TABLE clients ADD COLUMN widget_config TEXT"),
 ]
 
 def run_migrations():
@@ -380,6 +382,99 @@ def get_catalog_text(shop_url: str) -> str:
         return previous
 
 
+# ── Apparence du widget par client ────────────────────────────────────────────
+# Stockee en JSON dans clients.widget_config :
+#   color (#rrggbb), mode ("light" | "dark"), assistant_name, welcome
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def get_widget_config(token: str, db: Session) -> dict:
+    try:
+        row = db.execute(
+            text("SELECT widget_config FROM clients WHERE token = :t"), {"t": token}
+        ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+    except Exception as e:
+        print("GET_WIDGET_CONFIG ERROR:", e)
+        db.rollback()
+        return {}
+
+
+def set_widget_config(token: str, cfg: dict, db: Session):
+    clean = {k: v for k, v in cfg.items() if v not in (None, "")}
+    db.execute(
+        text("UPDATE clients SET widget_config = :c WHERE token = :t"),
+        {"c": json.dumps(clean, ensure_ascii=False) if clean else None, "t": token}
+    )
+    db.commit()
+
+
+def _to_hex(value: str) -> Optional[str]:
+    v = value.strip()
+    if v.startswith("#"):
+        h = v[1:]
+        if len(h) in (3, 4):
+            h = "".join(ch * 2 for ch in h[:3])
+        elif len(h) in (6, 8):
+            h = h[:6]
+        else:
+            return None
+        return "#" + h.lower() if re.fullmatch(r"[0-9a-fA-F]{6}", h) else None
+    parts = [p.strip() for p in v.split(",")]
+    if len(parts) == 3 and all(p.isdigit() and int(p) <= 255 for p in parts):
+        return "#" + "".join("%02x" % int(p) for p in parts)
+    return None
+
+
+def _luminance(hex_color: str) -> float:
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+CSS_VAR_RE = re.compile(r"--([A-Za-z0-9_-]+)\s*:\s*(#[0-9a-fA-F]{3,8}|\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3})\s*[;}]")
+META_THEME_RE = re.compile(r"<meta[^>]+name=[\"']theme-color[\"'][^>]*content=[\"']([^\"']+)[\"']", re.I)
+ACCENT_EXCLUDE = ("text", "label", "border", "shadow", "secondary", "outline", "hover",
+                  "foreground", "link", "disabled", "badge", "sale", "error", "success")
+BACKGROUND_NAMES = ("color-background", "colorbody", "color-body", "body-background",
+                    "color-body-bg", "background", "color-bg", "bg-color")
+
+
+def detect_theme_from_html(page: str) -> dict:
+    """Devine la couleur principale (boutons) et le fond (clair/sombre) d'une
+    boutique a partir des variables CSS de son theme Shopify."""
+    css_vars = [(n.lower(), _to_hex(v)) for n, v in CSS_VAR_RE.findall(page)]
+    css_vars = [(n, v) for n, v in css_vars if v]
+
+    def first(pred):
+        for n, v in css_vars:
+            if pred(n) and not any(x in n for x in ACCENT_EXCLUDE) and _luminance(v) < 0.92:
+                return v
+        return None
+
+    color = (first(lambda n: "button" in n) or first(lambda n: "btn" in n))
+    if not color:
+        m = META_THEME_RE.search(page)
+        meta = _to_hex(m.group(1)) if m else None
+        if meta and _luminance(meta) < 0.92:
+            color = meta
+    color = color or first(lambda n: "accent" in n) or first(lambda n: "primary" in n)
+
+    mode = "light"
+    for wanted in BACKGROUND_NAMES:
+        bg = next((v for n, v in css_vars if n == wanted), None)
+        if bg:
+            mode = "light" if _luminance(bg) > 0.5 else "dark"
+            break
+    return {"color": color, "mode": mode}
+
+
+def detect_shop_theme(shop_url: str) -> dict:
+    r = httpx.get(shop_url, timeout=8.0, follow_redirects=True,
+                  headers={"User-Agent": "Mozilla/5.0 (compatible; Replai-Theme/1.0)"})
+    r.raise_for_status()
+    return detect_theme_from_html(r.text)
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     message: str
@@ -406,6 +501,17 @@ class UpdateClientRequest(BaseModel):
     admin_password: Optional[str] = None
     client_email: Optional[str] = None
     shop_url: Optional[str] = None  # "" pour desactiver le catalogue
+    # Apparence du widget ("" pour revenir a la valeur par defaut)
+    widget_color: Optional[str] = None      # ex : "#111111"
+    widget_mode: Optional[str] = None       # "light" ou "dark"
+    assistant_name: Optional[str] = None    # ex : "Assistant Dreamer"
+    welcome_message: Optional[str] = None   # premier message affiche
+
+class DetectThemeRequest(BaseModel):
+    token: str
+    superadmin_password: str
+    assistant_name: Optional[str] = None
+    welcome_message: Optional[str] = None
 
 
 # ── Super-admin ───────────────────────────────────────────────────────────────
@@ -451,7 +557,55 @@ def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
     db.commit()
     if req.shop_url is not None:
         set_shop_url(c.token, req.shop_url, db)
-    return {"ok": True, "token": c.token, "shop_url": get_shop_url(c.token, db) or None}
+
+    if any(x is not None for x in (req.widget_color, req.widget_mode, req.assistant_name, req.welcome_message)):
+        if req.widget_color and not HEX_RE.match(req.widget_color):
+            raise HTTPException(status_code=400, detail="widget_color doit etre au format #rrggbb")
+        if req.widget_mode and req.widget_mode not in ("light", "dark"):
+            raise HTTPException(status_code=400, detail="widget_mode doit etre light ou dark")
+        cfg = get_widget_config(c.token, db)
+        for key, val in (("color", req.widget_color), ("mode", req.widget_mode),
+                         ("assistant_name", req.assistant_name), ("welcome", req.welcome_message)):
+            if val is not None:
+                cfg[key] = val.strip()[:300]
+        set_widget_config(c.token, cfg, db)
+
+    return {"ok": True, "token": c.token, "shop_url": get_shop_url(c.token, db) or None,
+            "widget": get_widget_config(c.token, db)}
+
+
+@app.post("/superadmin/detect-theme")
+def detect_theme(req: DetectThemeRequest, db: Session = Depends(get_db)):
+    """Lit la page d'accueil de la boutique et applique sa couleur au widget."""
+    if req.superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Non autorise")
+    c = db.query(Client).filter(Client.token == req.token).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Client introuvable")
+    shop_url = get_shop_url(c.token, db)
+    if not shop_url:
+        raise HTTPException(status_code=400, detail="Pas de shop_url pour ce client")
+    try:
+        found = detect_shop_theme(shop_url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="Boutique injoignable : %s" % e)
+    cfg = get_widget_config(c.token, db)
+    cfg["mode"] = found["mode"]
+    if found["color"]:
+        cfg["color"] = found["color"]
+    if req.assistant_name is not None:
+        cfg["assistant_name"] = req.assistant_name.strip()[:60]
+    if req.welcome_message is not None:
+        cfg["welcome"] = req.welcome_message.strip()[:300]
+    set_widget_config(c.token, cfg, db)
+    return {"ok": True, "detected": found, "widget": get_widget_config(c.token, db)}
+
+
+@app.get("/widget-config")
+def widget_config(token: str = "", db: Session = Depends(get_db)):
+    """Route publique lue par le widget au chargement : uniquement l'apparence."""
+    cfg = get_widget_config(token, db) if token else {}
+    return {k: cfg.get(k) for k in ("color", "mode", "assistant_name", "welcome") if cfg.get(k)}
 
 
 @app.get("/superadmin/clients")
@@ -770,6 +924,12 @@ var clientToken = new URLSearchParams(window.location.search).get("token") || ""
 var activeId = null;
 var allConvs = [];
 var isMobile = function() { return window.innerWidth <= 768; };
+// Les messages viennent des visiteurs : on les echappe avant tout innerHTML
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function(ch) {
+    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch];
+  });
+}
 
 if (!clientToken) {
   document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif'>Token manquant dans l URL</div>";
@@ -912,10 +1072,10 @@ function renderConvList(data) {
   }
 
   data.forEach(function(conv) {
-    var contact = conv.contact_info ? "<div class='contact-info'>&#128222; "+conv.contact_info+"</div>" : "";
-    var inner = "<div class='ci-top'><span class='ci-id'>#"+conv.id.slice(0,8)+"</span>"
+    var contact = conv.contact_info ? "<div class='contact-info'>&#128222; "+esc(conv.contact_info)+"</div>" : "";
+    var inner = "<div class='ci-top'><span class='ci-id'>#"+esc(conv.id.slice(0,8))+"</span>"
       +(conv.needs_human?"<span class='badge'>RAPPELER</span>":"")+"</div>"
-      +"<div class='ci-meta'>"+conv.created_at+" &middot; "+conv.message_count+" msg</div>"+contact;
+      +"<div class='ci-meta'>"+esc(conv.created_at)+" &middot; "+esc(conv.message_count)+" msg</div>"+contact;
 
     // Desktop
     var div = document.createElement("div");
@@ -972,7 +1132,7 @@ function buildMsg(msg) {
   var div = document.createElement("div");
   div.className = "msg " + msg.role;
   var who = msg.role === "user" ? "Visiteur" : "Assistant IA";
-  div.innerHTML = "<div class='msg-who'>"+who+"</div><div class='msg-text'>"+msg.content.split("\\n").join("<br>")+"</div>";
+  div.innerHTML = "<div class='msg-who'>"+who+"</div><div class='msg-text'>"+esc(msg.content).split("\\n").join("<br>")+"</div>";
   return div;
 }
 </script>
