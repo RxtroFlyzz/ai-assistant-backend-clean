@@ -243,7 +243,7 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
 # On le lit, on le met en cache, et on l'injecte dans le prompt : les nouveaux
 # drops, prix et ruptures de stock sont connus du bot sans intervention.
 CATALOG_TTL = 1800          # secondes (30 min)
-CATALOG_MAX_CHARS = 8000    # limite pour ne pas exploser le prompt
+CATALOG_MAX_CHARS = 40000   # ~10k tokens : ~150 produits avec description courte
 CATALOG_CACHE = {}          # shop_url -> (timestamp, texte)
 
 
@@ -281,8 +281,44 @@ def strip_html(raw: str) -> str:
     return re.sub(r"\s+", " ", html_lib.unescape(no_tags)).strip()
 
 
+def _uniq(values):
+    seen, out = set(), []
+    for v in values:
+        if v is not None and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _stock_text(p: dict, variants: list) -> str:
+    # Un seul variant "Default Title" = produit sans taille/couleur
+    if len(variants) == 1 and variants[0].get("title") == "Default Title":
+        return "en stock" if variants[0].get("available") else "RUPTURE DE STOCK"
+    if not any(v.get("available") for v in variants):
+        return "RUPTURE DE STOCK (toutes tailles)"
+    options = p.get("options") or []
+    if len(options) <= 1:
+        dispo = [v.get("title") for v in variants if v.get("available")]
+        epuise = [v.get("title") for v in variants if not v.get("available")]
+        txt = "disponible : " + ", ".join(dispo)
+        return txt + (" | epuise : " + ", ".join(epuise) if epuise else "")
+    # Plusieurs options (ex : taille x couleur) : on resume option par option,
+    # sinon une bague en 15 tailles x 4 pierres ferait 60 variantes sur une ligne.
+    parts = []
+    for i, opt in enumerate(options[:3], 1):
+        key = "option%d" % i
+        all_vals = _uniq(opt.get("values") or [v.get(key) for v in variants])
+        dispo = _uniq(v.get(key) for v in variants if v.get("available"))
+        epuise = [x for x in all_vals if x not in dispo]
+        part = "%s dispo : %s" % (opt.get("name") or "Option", ", ".join(dispo[:30]))
+        if epuise:
+            part += " (epuise : %s)" % ", ".join(epuise[:30])
+        parts.append(part)
+    return " | ".join(parts)
+
+
 def format_catalog(products: list, shop_url: str) -> str:
-    lines = []
+    cores, descs = [], []
     for p in products:
         variants = p.get("variants") or []
         if not variants:
@@ -295,28 +331,22 @@ def format_catalog(products: list, shop_url: str) -> str:
             line += " : %.2f EUR" % price
             if compares and max(compares) > price:
                 line += " (au lieu de %.2f EUR)" % max(compares)
-        # Un seul variant "Default Title" = produit sans taille/couleur
-        if len(variants) == 1 and variants[0].get("title") == "Default Title":
-            line += " | " + ("en stock" if variants[0].get("available") else "RUPTURE DE STOCK")
-        else:
-            dispo = [v.get("title") for v in variants if v.get("available")]
-            epuise = [v.get("title") for v in variants if not v.get("available")]
-            if not dispo:
-                line += " | RUPTURE DE STOCK (toutes tailles)"
-            else:
-                line += " | disponible : " + ", ".join(dispo)
-                if epuise:
-                    line += " | epuise : " + ", ".join(epuise)
-        desc = strip_html(p.get("body_html", ""))
-        if desc:
-            line += " | " + desc[:250]
+        line += " | " + _stock_text(p, variants)
         if p.get("handle"):
             line += " | " + shop_url + "/products/" + p["handle"]
-        lines.append(line)
-    out = "\n".join(lines)
-    if len(out) > CATALOG_MAX_CHARS:
-        out = out[:CATALOG_MAX_CHARS].rsplit("\n", 1)[0] + "\n(... catalogue tronque)"
-    return out
+        cores.append(line)
+        descs.append(strip_html(p.get("body_html", "")))
+
+    # Priorite : que TOUS les produits tiennent dans le prompt. On raccourcit
+    # les descriptions avant de supprimer des produits.
+    for desc_len in (250, 120, 60, 0):
+        lines = [c + (" | " + d[:desc_len] if d and desc_len else "") for c, d in zip(cores, descs)]
+        out = "\n".join(lines)
+        if len(out) <= CATALOG_MAX_CHARS:
+            return out
+    kept = out[:CATALOG_MAX_CHARS].rsplit("\n", 1)[0]
+    missing = len(lines) - kept.count("\n") - 1
+    return kept + "\n(... %d autres produits non listes ici : voir %s/collections/all)" % (missing, shop_url)
 
 
 def get_catalog_text(shop_url: str) -> str:
