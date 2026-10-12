@@ -75,10 +75,10 @@ STATE_PROPOSED = "proposed"
 STATE_ASKING   = "asking"
 STATE_DONE     = "done"
 
-MSG_PROPOSAL  = "Souhaitez-vous etre contacte par notre equipe ?"
-MSG_ASKING    = "Parfait ! Donnez-moi votre prenom et votre numero de telephone, notre equipe vous contactera rapidement."
-MSG_CONFIRMED = "Merci ! Notre equipe va vous contacter tres rapidement. A bientot !"
-MSG_DECLINED  = "Pas de probleme, je reste a votre disposition si besoin !"
+MSG_PROPOSAL  = "Souhaitez-vous être contacté par notre équipe ?"
+MSG_ASKING    = "Parfait ! Donnez-moi votre prénom et votre numéro de téléphone, notre équipe vous contactera rapidement."
+MSG_CONFIRMED = "Merci ! Notre équipe va vous contacter très rapidement. À bientôt !"
+MSG_DECLINED  = "Pas de problème, je reste à votre disposition si besoin !"
 
 
 # ── Détection demande humain ──────────────────────────────────────────────────
@@ -115,23 +115,74 @@ def get_visitor_messages(conv_id: str, db: Session) -> list:
     ).order_by(MessageModel.created_at).all()
     return [m.content for m in msgs]
 
+# Mots qui suffisent a reconnaitre un visiteur francophone, sans appel a l'IA
+FR_HINTS = re.compile(
+    r"\b(je|j|vous|nous|elle|est|des|une|pour|avec|dans|pas|oui|bonjour|bonsoir|salut|merci|svp|stp|"
+    r"francais|français|avez|avoir|quels|quelles|combien|taille|tailles|livraison|livrer|commande|commander|"
+    r"produit|produits|prix|retour|retours|rappeler|appeler|parler|humain|voudrais|veux|peux|pouvez|"
+    r"moi|mon|votre|vos|quand|pourquoi|aussi|encore|ça|ca|c'est|qu'est|est-ce|dispo)\b",
+    re.IGNORECASE,
+)
+
+
+KNOWN_LANGS = {"fr", "en", "es", "it", "de", "pt", "nl", "ar", "zh", "ja", "ru", "pl", "tr", "ro",
+               "sv", "da", "no", "fi", "cs", "el", "he", "ko", "uk", "hu", "vi", "th", "id", "hi"}
+
+
+def detect_visitor_language(visitor_messages: list) -> str:
+    """Code langue (ISO 639-1) du visiteur. Francais par defaut : c'est le
+    marche de Replai, et un doute ne doit jamais faire basculer en anglais."""
+    recent = [m for m in visitor_messages[-3:] if m and m.strip()]
+    if not recent:
+        return "fr"
+    # On juge sur le message le plus recent qui contient de vrais mots : un
+    # simple "Gianluca 0612345678" ou un email ne dit rien de la langue.
+    for msg in reversed(recent):
+        if FR_HINTS.search(msg):
+            return "fr"
+        words = re.findall(r"[^\W\d_]{2,}", re.sub(r"\S+@\S+", " ", msg))
+        if len(words) >= 2:
+            break
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=5,
+            messages=[
+                {"role": "system", "content": (
+                    "You identify the language a website visitor writes in. "
+                    "Messages are separated by |, the last one is the most recent. "
+                    "Ignore names, phone numbers, emails and one-word answers like ok, yes/no: "
+                    "judge from the most recent message that contains real words. "
+                    "If the visitor asks for a language (e.g. 'francais?', 'english please'), return that language. "
+                    "Answer ONLY with the ISO 639-1 code (e.g. fr, en, it, es, de). If unsure, answer fr."
+                )},
+                {"role": "user", "content": " | ".join(recent)[:500]}
+            ]
+        )
+        code = response.choices[0].message.content.strip().lower()[:2]
+        return code if code in KNOWN_LANGS else "fr"
+    except Exception as e:
+        print("LANG DETECT ERROR:", e)
+        return "fr"
+
+
 def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) -> str:
-    context = " | ".join(visitor_messages[-3:]) if visitor_messages else ""
-    if not context:
+    """Les messages fixes sont ecrits en francais : on ne les traduit que si le
+    visiteur ecrit clairement dans une autre langue."""
+    lang = detect_visitor_language(visitor_messages or [])
+    if lang == "fr":
         return canonical_msg
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
-            max_tokens=120,
+            max_tokens=150,
             messages=[
                 {"role": "system", "content": (
-                    "Detect the language from the conversation context and translate the message into that language. "
-                    "The context may contain multiple messages separated by | — use the overall language pattern, "
-                    "not just the last message (which may contain a name or phone number). "
-                    "Return ONLY the translated message, nothing else. "
-                    "If the language is unclear, return the message in English."
+                    "Translate the following French customer-service message into the language whose "
+                    "ISO 639-1 code is '%s'. Keep the same tone and meaning. "
+                    "Return ONLY the translation, nothing else." % lang
                 )},
-                {"role": "user", "content": "Conversation context: " + context[:400] + "\n\nMessage to translate: " + canonical_msg}
+                {"role": "user", "content": canonical_msg}
             ]
         )
         result = response.choices[0].message.content.strip()
