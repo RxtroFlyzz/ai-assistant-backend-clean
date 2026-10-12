@@ -192,29 +192,54 @@ def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) ->
         return canonical_msg
 
 
-def classify_yes_no(visitor_message: str) -> bool:
+YES_FAST = re.compile(r"^\s*(oui|ouais|ouep|ok|okay|d'?accord|dac|volontiers|avec plaisir|bien s[uû]r|carr[ée]ment|"
+                      r"oui (svp|stp|merci|volontiers|bien s[uû]r|avec plaisir)|go|yes|yep|yeah|sure|s[iì]|ja|claro)\s*[!.]*\s*$", re.I)
+NO_FAST = re.compile(r"^\s*(non|nan|no|nope|non merci|pas besoin|pas pour l'instant|pas maintenant|plus tard|"
+                     r"no thanks|nein)\s*[!.]*\s*$", re.I)
+
+CLASSIFY_CONTEXT = {
+    "proposal": "The visitor was asked whether they want to be contacted by a team member.",
+    "asking": "The visitor was asked to give their first name and phone number so the team can call them back.",
+}
+
+
+def classify_reply(visitor_message: str, step: str) -> str:
+    """YES / NO / OTHER. OTHER = le visiteur pose une autre question ou change
+    de sujet : on sort alors du parcours de rappel au lieu de boucler."""
+    t = (visitor_message or "").strip()
+    if YES_FAST.match(t):
+        return "YES"
+    if NO_FAST.match(t):
+        return "NO"
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             max_tokens=5,
             messages=[
                 {"role": "system", "content": (
-                    "The user was asked if they want to be contacted by a team member. "
-                    "Classify their reply. Answer ONLY with YES or NO. "
-                    "YES = they accept (any language: oui, yes, si, ja, da, hai, etc. or any positive phrasing). "
-                    "NO = they decline or refuse."
+                    CLASSIFY_CONTEXT.get(step, CLASSIFY_CONTEXT["proposal"]) + " "
+                    "Classify their reply, in any language. Answer ONLY with YES, NO or OTHER. "
+                    "YES = they accept or go along with it (agreeing, giving part of their details, "
+                    "asking how long it takes, saying they look for their number). "
+                    "NO = they decline or refuse. "
+                    "OTHER = they ask a different question or talk about something else "
+                    "(a product, stock, delivery, sizes, how to get news, etc.)."
                 )},
-                {"role": "user", "content": visitor_message[:300]}
+                {"role": "user", "content": t[:300]}
             ]
         )
-        return "YES" in response.choices[0].message.content.upper()
+        label = response.choices[0].message.content.strip().upper()
+        for option in ("OTHER", "YES", "NO"):
+            if option in label:
+                return option
+        return "OTHER"
     except Exception as e:
         print("CLASSIFY ERROR:", e)
-        t = visitor_message.strip().lower()
-        negative = re.compile(r'\b(non|no|nope|nein|nee|nej|niet|nao|jamais|never|not)\b', re.IGNORECASE)
-        if negative.search(t):
-            return False
-        return len(t.split()) <= 8
+        if re.search(r"\b(non|no|nope|nein|jamais|never)\b", t, re.I):
+            return "NO"
+        if "?" in t or len(t.split()) > 6:
+            return "OTHER"
+        return "YES"
 
 
 def contains_contact_info(message: str) -> bool:
@@ -1339,22 +1364,33 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, True)
-        else:
+        label = classify_reply(msg.message, "asking")
+        if label == "YES":
             reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
+        set_state(conv_id, STATE_NORMAL, db)
+        if label == "NO":
+            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs)
+            save_message(conv_id, "assistant", reply, db)
+            return bot_reply(reply, conv_id, False)
+        # OTHER : le visiteur a change de sujet -> reponse normale plus bas
+        state = STATE_NORMAL
 
     if state == STATE_PROPOSED:
-        if classify_yes_no(msg.message):
+        label = classify_reply(msg.message, "proposal")
+        if label == "YES":
             set_state(conv_id, STATE_ASKING, db)
             reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
-        else:
-            set_state(conv_id, STATE_NORMAL, db)
+        set_state(conv_id, STATE_NORMAL, db)
+        if label == "NO":
             reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
+        # OTHER : nouvelle question -> reponse normale plus bas
+        state = STATE_NORMAL
 
     if HUMAN_REGEX.search(msg.message):
         set_state(conv_id, STATE_PROPOSED, db)
