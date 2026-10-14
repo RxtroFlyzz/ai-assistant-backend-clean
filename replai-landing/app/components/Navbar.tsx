@@ -1,154 +1,95 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useLang } from "../context/LangContext";
 
+export function Logo({ light = false, themed = false }: { light?: boolean; themed?: boolean }) {
+  return (
+    <span className="flex items-center gap-2.5">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-indigo-600 shadow-md shadow-indigo-600/30">
+        <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" width="18" height="18" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+          <path d="M5 6.5h14v9H11l-4 3v-3H5z" />
+          <path d="M9.5 11h.01M14.5 11h.01" />
+        </svg>
+      </span>
+      <span className={`font-display text-lg font-semibold tracking-tight ${themed ? "nav-ink" : light ? "text-white" : "text-slate-900"}`}>Replai</span>
+    </span>
+  );
+}
+
 export default function Navbar() {
-  const { lang, setLang, t } = useLang();
-  const [scrolled, setScrolled] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const { lang, setLang, c } = useLang();
+  const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    const handler = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", handler);
-    return () => window.removeEventListener("scroll", handler);
-  }, []);
-
-  const navLinks = [
-    { href: "#howitworks", label: t("nav.how") },
-    { href: "#features", label: t("nav.features") },
-    { href: "#pricing", label: t("nav.pricing") },
-    { href: "#contact", label: t("nav.contact") },
-  ];
+  const LangSwitch = (
+    <div className="flex items-center nav-pill rounded-full p-0.5">
+      {(["fr", "en"] as const).map((l) => (
+        <button
+          key={l}
+          onClick={() => setLang(l)}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+            lang === l ? "bg-white text-slate-900 shadow-sm" : "nav-link"
+          }`}
+          aria-pressed={lang === l}
+        >
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
-    <motion.nav
-      initial={{ y: -80, opacity: 0 }}
+    <motion.header
+      initial={{ y: -40, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
-        scrolled ? "glass-navbar shadow-lg shadow-black/30" : "bg-transparent"
-      }`}
+      className="fixed inset-x-0 top-3 z-50 px-3 sm:top-4 sm:px-6"
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 lg:h-18">
-          {/* Logo */}
-          <a href="#" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-              <span className="text-white font-display font-bold text-sm">R</span>
-            </div>
-            <span className="font-display font-semibold text-white text-lg">
-              Re<span className="gradient-text">plai</span>
-            </span>
-          </a>
+      <nav className="mx-auto flex max-w-6xl items-center justify-between nav-shell rounded-full px-4 py-2.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl sm:px-5">
+        <a href="#" aria-label="Replai"><Logo themed /></a>
 
-          {/* Desktop links */}
-          <div className="hidden md:flex items-center gap-8">
-            {navLinks.map((link) => (
-              <a
-                key={link.href}
-                href={link.href}
-                className="text-sm text-slate-300 hover:text-white transition-colors duration-200 relative group"
-              >
-                {link.label}
-                <span className="absolute -bottom-0.5 left-0 w-0 h-px bg-gradient-to-r from-indigo-500 to-purple-500 group-hover:w-full transition-all duration-300" />
-              </a>
-            ))}
-          </div>
-
-          {/* Right side */}
-          <div className="flex items-center gap-3">
-            {/* Lang switcher */}
-            <div className="hidden md:flex items-center glass rounded-full px-1 py-1 gap-0.5">
-              {(["fr", "en"] as const).map((l) => (
-                <button
-                  key={l}
-                  onClick={() => setLang(l)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
-                    lang === l
-                      ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  {l.toUpperCase()}
-                </button>
-              ))}
-            </div>
-
-            {/* CTA */}
-            <a
-              href="#contact"
-              className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-400 text-white text-sm font-medium shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-105 active:scale-95 transition-all duration-200"
-            >
-              {t("nav.cta")}
+        <div className="hidden items-center gap-7 md:flex">
+          {c.nav.links.map((l) => (
+            <a key={l.href} href={l.href} className="nav-link text-sm font-medium">
+              {l.label}
             </a>
-
-            {/* Mobile menu button */}
-            <button
-              className="md:hidden p-2 text-slate-300"
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-label="Toggle menu"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                {menuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
-          </div>
+          ))}
         </div>
-      </div>
 
-      {/* Mobile menu */}
+        <div className="flex items-center gap-3">
+          <div className="hidden md:block">{LangSwitch}</div>
+          <a href="#contact" className="btn-primary hidden px-4 py-2 text-sm md:inline-flex">{c.nav.cta}</a>
+          <button className="nav-ink p-2 md:hidden" onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open}>
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              {open ? <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />}
+            </svg>
+          </button>
+        </div>
+      </nav>
+
       <AnimatePresence>
-        {menuOpen && (
+        {open && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="md:hidden glass-navbar border-t border-white/5 overflow-hidden"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="nav-shell mx-auto mt-2 max-w-6xl rounded-3xl p-4 shadow-lg backdrop-blur-xl md:hidden"
           >
-            <div className="px-4 py-4 flex flex-col gap-3">
-              {navLinks.map((link) => (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  className="text-slate-300 hover:text-white py-2 text-sm"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {link.label}
+            <div className="flex flex-col">
+              {c.nav.links.map((l) => (
+                <a key={l.href} href={l.href} onClick={() => setOpen(false)} className="nav-link py-2.5 text-sm font-medium">
+                  {l.label}
                 </a>
               ))}
-              <div className="flex items-center gap-3 pt-2 border-t border-white/10">
-                <div className="flex items-center glass rounded-full px-1 py-1 gap-0.5">
-                  {(["fr", "en"] as const).map((l) => (
-                    <button
-                      key={l}
-                      onClick={() => setLang(l)}
-                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
-                        lang === l ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white" : "text-slate-400"
-                      }`}
-                    >
-                      {l.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-                <a
-                  href="#contact"
-                  className="flex-1 text-center px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-400 text-white text-sm font-medium"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {t("nav.cta")}
-                </a>
-              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3 border-t pt-3" style={{ borderColor: "var(--nav-border)" }}>
+              {LangSwitch}
+              <a href="#contact" onClick={() => setOpen(false)} className="btn-primary flex-1 px-4 py-2.5 text-sm">{c.nav.cta}</a>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.nav>
+    </motion.header>
   );
 }

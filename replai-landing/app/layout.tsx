@@ -3,13 +3,13 @@ import ReplaiWidget from "./components/ReplaiWidget";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Replai — Chatbot IA pour TPEs françaises",
+  title: "Replai — L'assistant IA des boutiques en ligne",
   description:
-    "Automatisez vos réponses clients 24h/7j avec un chatbot IA entraîné sur votre activité. Setup en 24h.",
+    "Replai répond à vos clients à toute heure : tailles, stocks, livraison, retours. Moins de ventes perdues, moins de messages à traiter.",
   metadataBase: new URL("https://aireply.fr"),
   openGraph: {
-    title: "Replai — Chatbot IA pour TPEs françaises",
-    description: "Votre client, toujours répondu.",
+    title: "Replai — L'assistant IA des boutiques en ligne",
+    description: "Vos clients ont des questions. Même à 3 h du matin.",
     url: "https://aireply.fr",
     siteName: "Replai",
     locale: "fr_FR",

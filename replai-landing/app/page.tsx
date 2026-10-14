@@ -1,28 +1,35 @@
 "use client";
 
 import { LangProvider } from "./context/LangContext";
+import SkyScene from "./components/SkyScene";
+import Mascot from "./components/Mascot";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
+import Benefits from "./components/Benefits";
 import HowItWorks from "./components/HowItWorks";
 import Features from "./components/Features";
+import NightShift from "./components/NightShift";
 import Pricing from "./components/Pricing";
-import CtaSection from "./components/CtaSection";
+import Contact from "./components/Contact";
 import Footer from "./components/Footer";
 
 export default function Home() {
   return (
     <LangProvider>
-      <div className="min-h-screen" style={{ background: "hsl(260, 87%, 3%)" }}>
+      <SkyScene>
         <Navbar />
         <main>
           <Hero />
+          <Benefits />
           <HowItWorks />
           <Features />
+          <NightShift />
           <Pricing />
-          <CtaSection />
+          <Contact />
         </main>
         <Footer />
-      </div>
+        <Mascot />
+      </SkyScene>
     </LangProvider>
   );
 }

@@ -4,84 +4,121 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg: hsl(260, 87%, 3%);
-  --accent: #6366f1;
-  --purple: #a855f7;
-  --amber: #fcd34d;
+/* Couleurs du texte et des cartes : elles basculent en douceur
+   quand le ciel passe a la nuit (data-theme pose par SkyScene). */
+@property --ink { syntax: "<color>"; inherits: true; initial-value: #0f172a; }
+@property --ink-soft { syntax: "<color>"; inherits: true; initial-value: #475569; }
+@property --accent-ink { syntax: "<color>"; inherits: true; initial-value: #4f46e5; }
+@property --surface { syntax: "<color>"; inherits: true; initial-value: rgba(255, 255, 255, 0.8); }
+@property --surface-border { syntax: "<color>"; inherits: true; initial-value: rgba(15, 23, 42, 0.08); }
+@property --nav-bg { syntax: "<color>"; inherits: true; initial-value: rgba(255, 255, 255, 0.75); }
+@property --nav-border { syntax: "<color>"; inherits: true; initial-value: rgba(255, 255, 255, 0.6); }
+@property --nav-ink { syntax: "<color>"; inherits: true; initial-value: #0f172a; }
+@property --nav-ink-soft { syntax: "<color>"; inherits: true; initial-value: #475569; }
+@property --nav-pill { syntax: "<color>"; inherits: true; initial-value: rgba(15, 23, 42, 0.05); }
+
+:root, .sky-root {
+  --ink: #0f172a;
+  --ink-soft: #475569;
+  --accent-ink: #4f46e5;
+  --surface: rgba(255, 255, 255, 0.8);
+  --surface-border: rgba(15, 23, 42, 0.08);
+  --nav-bg: rgba(255, 255, 255, 0.75);
+  --nav-border: rgba(255, 255, 255, 0.6);
+  --nav-ink: #0f172a;
+  --nav-ink-soft: #475569;
+  --nav-pill: rgba(15, 23, 42, 0.05);
+}
+.sky-root {
+  transition: --ink 0.7s ease, --ink-soft 0.7s ease, --accent-ink 0.7s ease, --surface 0.7s ease,
+    --surface-border 0.7s ease, --nav-bg 0.7s ease, --nav-border 0.7s ease, --nav-ink 0.7s ease,
+    --nav-ink-soft 0.7s ease, --nav-pill 0.7s ease;
+}
+.sky-root[data-theme="night"] {
+  --ink: #f8fafc;
+  --ink-soft: #cbd5e1;
+  --accent-ink: #a5b4fc;
+  --surface: rgba(15, 18, 48, 0.62);
+  --surface-border: rgba(255, 255, 255, 0.1);
+  --nav-bg: rgba(12, 15, 40, 0.72);
+  --nav-border: rgba(255, 255, 255, 0.1);
+  --nav-ink: #f8fafc;
+  --nav-ink-soft: #cbd5e1;
+  --nav-pill: rgba(255, 255, 255, 0.08);
 }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 
 body {
-  background-color: var(--bg);
-  color: #e2e8f0;
+  background-color: #0e1335;
+  color: var(--ink);
   font-family: "DM Sans", sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 .font-display { font-family: "General Sans", sans-serif; }
 
-.gradient-text {
-  background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #fcd34d 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+/* Couleurs qui suivent le ciel (definies par SkyScene) */
+.ink { color: var(--ink); }
+.ink-soft { color: var(--ink-soft); }
+.accent-ink { color: var(--accent-ink); }
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
 }
 
-.glass {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background: #4f46e5;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 10px 30px -10px rgba(79, 70, 229, 0.65);
+  transition: background-color 0.2s, transform 0.2s, box-shadow 0.2s;
 }
+.btn-primary:hover { background: #4338ca; transform: translateY(-1px); box-shadow: 0 14px 34px -10px rgba(79, 70, 229, 0.75); }
+.btn-primary:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 3px; }
 
-.glass-navbar {
-  background: rgba(10, 2, 30, 0.6);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
+/* Barre de navigation qui suit le jour et la nuit */
+.nav-shell { background: var(--nav-bg); border: 1px solid var(--nav-border); }
+.nav-ink { color: var(--nav-ink); }
+.nav-link { color: var(--nav-ink-soft); transition: color 0.2s; }
+.nav-link:hover { color: var(--nav-ink); }
+.nav-pill { background: var(--nav-pill); }
 
-.glow-border {
-  position: relative;
+/* Nuages qui derivent lentement */
+@keyframes cloud-drift {
+  0% { transform: translateX(-12vw); }
+  50% { transform: translateX(12vw); }
+  100% { transform: translateX(-12vw); }
 }
-.glow-border::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, #6366f1, #a855f7, #fcd34d);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-.glow-border:hover::before { opacity: 1; }
+.cloud-drift { animation: cloud-drift linear infinite; }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.4); border-radius: 3px; }
-
-.video-overlay {
-  background: linear-gradient(
-    to bottom,
-    rgba(10,2,30,0.25) 0%,
-    rgba(10,2,30,0.45) 60%,
-    rgba(10,2,30,0.97) 100%
-  );
+@keyframes twinkle {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
+.star-twinkle { animation: twinkle ease-in-out infinite; }
 
 @keyframes blink {
-  0%, 80%, 100% { opacity: 0; }
+  0%, 80%, 100% { opacity: 0.2; }
   40% { opacity: 1; }
 }
 .typing-dot:nth-child(1) { animation: blink 1.4s ease infinite; }
 .typing-dot:nth-child(2) { animation: blink 1.4s ease 0.2s infinite; }
 .typing-dot:nth-child(3) { animation: blink 1.4s ease 0.4s infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .cloud-drift, .star-twinkle, .typing-dot { animation: none !important; }
+}
 
 @layer utilities {
   .text-balance { text-wrap: balance; }
