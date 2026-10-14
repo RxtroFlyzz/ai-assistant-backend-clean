@@ -129,12 +129,18 @@ KNOWN_LANGS = {"fr", "en", "es", "it", "de", "pt", "nl", "ar", "zh", "ja", "ru",
                "sv", "da", "no", "fi", "cs", "el", "he", "ko", "uk", "hu", "vi", "th", "id", "hi"}
 
 
-def detect_visitor_language(visitor_messages: list) -> str:
-    """Code langue (ISO 639-1) du visiteur. Francais par defaut : c'est le
-    marche de Replai, et un doute ne doit jamais faire basculer en anglais."""
+def page_lang_hint(value) -> str:
+    """Langue de la page ou se trouve le widget (attribut lang du site)."""
+    code = (value or "").strip().lower()[:2]
+    return code if code in KNOWN_LANGS else "fr"
+
+
+def detect_visitor_language(visitor_messages: list, default: str = "fr") -> str:
+    """Code langue (ISO 639-1) du visiteur. Sans indice clair, on garde la
+    langue de la page (francais par defaut : c'est le marche de Replai)."""
     recent = [m for m in visitor_messages[-3:] if m and m.strip()]
     if not recent:
-        return "fr"
+        return default
     # On juge sur le message le plus recent qui contient de vrais mots : un
     # simple "Gianluca 0612345678" ou un email ne dit rien de la langue.
     for msg in reversed(recent):
@@ -143,6 +149,9 @@ def detect_visitor_language(visitor_messages: list) -> str:
         words = re.findall(r"[^\W\d_]{2,}", re.sub(r"\S+@\S+", " ", msg))
         if len(words) >= 2:
             break
+    else:
+        # Que des "ok", noms ou numeros : rien ne dit la langue
+        return default
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -154,22 +163,22 @@ def detect_visitor_language(visitor_messages: list) -> str:
                     "Ignore names, phone numbers, emails and one-word answers like ok, yes/no: "
                     "judge from the most recent message that contains real words. "
                     "If the visitor asks for a language (e.g. 'francais?', 'english please'), return that language. "
-                    "Answer ONLY with the ISO 639-1 code (e.g. fr, en, it, es, de). If unsure, answer fr."
+                    "Answer ONLY with the ISO 639-1 code (e.g. fr, en, it, es, de). If unsure, answer %s." % default
                 )},
                 {"role": "user", "content": " | ".join(recent)[:500]}
             ]
         )
         code = response.choices[0].message.content.strip().lower()[:2]
-        return code if code in KNOWN_LANGS else "fr"
+        return code if code in KNOWN_LANGS else default
     except Exception as e:
         print("LANG DETECT ERROR:", e)
-        return "fr"
+        return default
 
 
-def translate_to_visitor_language(canonical_msg: str, visitor_messages: list) -> str:
+def translate_to_visitor_language(canonical_msg: str, visitor_messages: list, page_lang: str = "fr") -> str:
     """Les messages fixes sont ecrits en francais : on ne les traduit que si le
-    visiteur ecrit clairement dans une autre langue."""
-    lang = detect_visitor_language(visitor_messages or [])
+    visiteur ecrit dans une autre langue (ou, a defaut, si la page n'est pas en francais)."""
+    lang = detect_visitor_language(visitor_messages or [], page_lang)
     if lang == "fr":
         return canonical_msg
     try:
@@ -679,10 +688,12 @@ class ChatRequest(BaseModel):
     page_content: Optional[str] = None
     page_url: Optional[str] = None
     client_token: Optional[str] = None
+    page_lang: Optional[str] = None
 
 class ContactHumanRequest(BaseModel):
     conversation_id: Optional[str] = None
     client_token: Optional[str] = None
+    page_lang: Optional[str] = None
 
 class CreateClientRequest(BaseModel):
     business_name: str
@@ -1409,7 +1420,7 @@ def contact_human(req: ContactHumanRequest, db: Session = Depends(get_db)):
         db.add(conv)
         db.commit()
     visitor_msgs = get_visitor_messages(conv_id, db)
-    reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs) if visitor_msgs else MSG_ASKING
+    reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs, page_lang_hint(req.page_lang))
     set_state(conv_id, STATE_ASKING, db)
     save_message(conv_id, "assistant", reply, db)
     return bot_reply(reply, conv_id, False)
@@ -1430,23 +1441,24 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     save_message(conv_id, "user", msg.message, db)
     state = get_state(conv_id, db)
     visitor_msgs = get_visitor_messages(conv_id, db)
+    page_lang = page_lang_hint(msg.page_lang)
 
     if state == STATE_ASKING:
         if contains_contact_info(msg.message):
             if c:
                 send_human_email(conv_id, msg.message, c)
             set_state(conv_id, STATE_DONE, db)
-            reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs)
+            reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, True)
         label = classify_reply(msg.message, "asking")
         if label == "YES":
-            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
+            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
         set_state(conv_id, STATE_NORMAL, db)
         if label == "NO":
-            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs)
+            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
         # OTHER : le visiteur a change de sujet -> reponse normale plus bas
@@ -1456,12 +1468,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         label = classify_reply(msg.message, "proposal")
         if label == "YES":
             set_state(conv_id, STATE_ASKING, db)
-            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs)
+            reply = translate_to_visitor_language(MSG_ASKING, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
         set_state(conv_id, STATE_NORMAL, db)
         if label == "NO":
-            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs)
+            reply = translate_to_visitor_language(MSG_DECLINED, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
             return bot_reply(reply, conv_id, False)
         # OTHER : nouvelle question -> reponse normale plus bas
@@ -1469,7 +1481,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 
     if HUMAN_REGEX.search(msg.message):
         set_state(conv_id, STATE_PROPOSED, db)
-        reply = translate_to_visitor_language(MSG_PROPOSAL, visitor_msgs)
+        reply = translate_to_visitor_language(MSG_PROPOSAL, visitor_msgs, page_lang)
         save_message(conv_id, "assistant", reply, db)
         return bot_reply(reply, conv_id, False)
 

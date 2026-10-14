@@ -16,6 +16,30 @@
   var CONFIG_URL = BASE_URL + "/widget-config?token=" + encodeURIComponent(CLIENT_TOKEN);
   var STORE_KEY = "rpl_conv_" + CLIENT_TOKEN;
 
+  // ── Langue de l'interface : suit la langue de la page (attribut lang) ─────
+  var TEXTS = {
+    fr: {
+      title: "Assistant IA", online: "En ligne", close: "Fermer", send: "Envoyer",
+      human: "Parler à un humain", placeholder: "Écrivez votre message…", you: "Vous",
+      error: "Une erreur est survenue. Réessayez.", sending: "Envoi en cours…", sent: "Demande envoyée ✓",
+      welcome: "Bonjour ! Comment puis-je vous aider ?",
+      view: "Voir : ", shipping: "Livraison", returns: "Retours", collection: "Voir la collection"
+    },
+    en: {
+      title: "AI assistant", online: "Online", close: "Close", send: "Send",
+      human: "Talk to a person", placeholder: "Type your message…", you: "You",
+      error: "Something went wrong. Please try again.", sending: "Sending…", sent: "Request sent ✓",
+      welcome: "Hi! How can I help you?",
+      view: "View: ", shipping: "Shipping", returns: "Returns", collection: "View collection"
+    }
+  };
+  function pageLang() {
+    var l = (document.documentElement.getAttribute("lang") || navigator.language || "fr").toLowerCase();
+    return l.slice(0, 2);
+  }
+  function uiLang() { return pageLang() === "fr" ? "fr" : (TEXTS[pageLang()] ? pageLang() : "en"); }
+  function T(key) { return TEXTS[uiLang()][key]; }
+
   // ── Styles (couleurs pilotees par des variables CSS, cf. applyTheme) ───────
   var style = document.createElement("style");
   style.textContent = [
@@ -145,19 +169,19 @@
     "  <div id='rpl-header-left'>",
     "    <div id='rpl-avatar'>&#129302;</div>",
     "    <div>",
-    "      <div id='rpl-title'>Assistant IA</div>",
-    "      <div id='rpl-status'><span id='rpl-dot'></span> En ligne</div>",
+    "      <div id='rpl-title'></div>",
+    "      <div id='rpl-status'><span id='rpl-dot'></span> <span id='rpl-online'></span></div>",
     "    </div>",
     "  </div>",
-    "  <button id='rpl-close' aria-label='Fermer'>&#10005;</button>",
+    "  <button id='rpl-close'>&#10005;</button>",
     "</div>",
     "<div id='rpl-msgs'>",
     "  <div id='rpl-typing'><span></span><span></span><span></span></div>",
     "</div>",
-    "<button id='rpl-human-btn'>&#128222; Parler à un humain</button>",
+    "<button id='rpl-human-btn'></button>",
     "<div id='rpl-input-row'>",
-    "  <input id='rpl-input' placeholder='Écrivez votre message…' autocomplete='off' />",
-    "  <button id='rpl-send' aria-label='Envoyer'>&#10148;</button>",
+    "  <input id='rpl-input' autocomplete='off' />",
+    "  <button id='rpl-send'>&#10148;</button>",
     "</div>"
   ].join("");
 
@@ -170,8 +194,19 @@
   var sendBtn = document.getElementById("rpl-send");
   var typing = document.getElementById("rpl-typing");
 
-  var botName = "Assistant IA";
-  var welcome = "";
+  var customName = "";   // nom choisi pour le client (ex. "Assistant Dreamer")
+  var customWelcome = ""; // message d'accueil configure (redige en francais)
+  function botName() {
+    if (!customName) return T("title");
+    if (uiLang() === "en") {
+      var m = customName.match(/^assistante?\s+(?:de\s+|d['’])?(.+)$/i);
+      if (m) return m[1] + " assistant";
+    }
+    return customName;
+  }
+  function welcomeText() {
+    return customWelcome && uiLang() === "fr" ? customWelcome : T("welcome");
+  }
 
   // ── Memoire de la conversation (suit le visiteur de page en page) ────────
   var state = { c: null, m: [], o: false, h: false };
@@ -206,12 +241,36 @@
       setVars({ "--rpl-accent": cfg.color, "--rpl-on-accent": luminance(cfg.color) > 0.6 ? "#111827" : "#ffffff" });
     }
     if (cfg.assistant_name) {
-      botName = cfg.assistant_name;
-      document.getElementById("rpl-title").textContent = botName;
-      var brand = botName.replace(/^assistant(e)?\s+(de\s+|d')?/i, "");
+      customName = cfg.assistant_name;
+      var brand = customName.replace(/^assistant(e)?\s+(de\s+|d')?/i, "");
       if (brand) document.getElementById("rpl-avatar").textContent = brand.charAt(0).toUpperCase();
     }
-    if (cfg.welcome) welcome = cfg.welcome;
+    if (cfg.welcome) customWelcome = cfg.welcome;
+    applyLang();
+  }
+
+  // Textes de l'interface, remis a jour si la page change de langue
+  var lastLang = null;
+  function applyLang() {
+    var lang = uiLang();
+    document.getElementById("rpl-title").textContent = botName();
+    document.getElementById("rpl-online").textContent = T("online");
+    document.getElementById("rpl-close").setAttribute("aria-label", T("close"));
+    sendBtn.setAttribute("aria-label", T("send"));
+    input.placeholder = T("placeholder");
+    if (!humanBtn.disabled) humanBtn.textContent = "\u260E " + T("human");
+    else if (state.h) humanBtn.textContent = T("sent");
+    var whos = msgs.querySelectorAll(".rpl-who");
+    for (var i = 0; i < whos.length; i++) {
+      whos[i].textContent = whos[i].parentNode.classList.contains("user") ? T("you") : botName();
+    }
+    // Si seul l'accueil a ete affiche, on le traduit aussi
+    if (lastLang && lastLang !== lang && state.m.length === 1 && state.m[0].w) {
+      state.m[0].t = welcomeText(); persist();
+      var b = msgs.querySelector(".rpl-msg.bot .rpl-bubble");
+      if (b) { b.textContent = ""; renderBot(b, state.m[0].t); }
+    }
+    lastLang = lang;
   }
 
   // ── Liens cliquables dans les reponses ────────────────────────────────────
@@ -222,11 +281,11 @@
       var m = u.pathname.match(/\/products\/([^\/?#]+)/);
       if (m) {
         var name = decodeURIComponent(m[1]).replace(/[-_]+/g, " ").trim();
-        return "Voir : " + name.charAt(0).toUpperCase() + name.slice(1);
+        return T("view") + name.charAt(0).toUpperCase() + name.slice(1);
       }
-      if (/shipping-policy/.test(u.pathname)) return "Livraison";
-      if (/refund-policy/.test(u.pathname)) return "Retours";
-      if (/\/collections\//.test(u.pathname)) return "Voir la collection";
+      if (/shipping-policy/.test(u.pathname)) return T("shipping");
+      if (/refund-policy/.test(u.pathname)) return T("returns");
+      if (/\/collections\//.test(u.pathname)) return T("collection");
       return u.hostname.replace(/^www\./, "");
     } catch (e) { return url; }
   }
@@ -263,12 +322,12 @@
     if (last < text.length) bubble.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  function addMsg(role, text, remember) {
+  function addMsg(role, text, remember, isWelcome) {
     var wrapper = document.createElement("div");
     wrapper.className = "rpl-msg " + role;
     var who = document.createElement("div");
     who.className = "rpl-who";
-    who.textContent = role === "user" ? "Vous" : botName;
+    who.textContent = role === "user" ? T("you") : botName();
     var bubble = document.createElement("div");
     bubble.className = "rpl-bubble";
     if (role === "bot") renderBot(bubble, String(text || "")); else bubble.textContent = text;
@@ -276,7 +335,11 @@
     wrapper.appendChild(bubble);
     msgs.insertBefore(wrapper, typing);
     msgs.scrollTop = msgs.scrollHeight;
-    if (remember !== false) { state.m.push({ r: role, t: text }); persist(); }
+    if (remember !== false) {
+      var entry = { r: role, t: text };
+      if (isWelcome) entry.w = 1;
+      state.m.push(entry); persist();
+    }
   }
 
   function showTyping() { typing.style.display = "flex"; msgs.scrollTop = msgs.scrollHeight; }
@@ -286,7 +349,7 @@
     state.o = open; persist();
     box.style.display = open ? "flex" : "none";
     if (open) {
-      if (!state.m.length && welcome) addMsg("bot", welcome);
+      if (!state.m.length) addMsg("bot", welcomeText(), true, true);
       input.focus();
     }
   }
@@ -312,7 +375,8 @@
         conversation_id: state.c,
         page_content: getPageContent(),
         page_url: window.location.href,
-        client_token: CLIENT_TOKEN
+        client_token: CLIENT_TOKEN,
+        page_lang: pageLang()
       })
     }).then(function(res) {
       if (!res.ok) throw new Error("Erreur");
@@ -323,7 +387,7 @@
       addMsg("bot", data.reply);
     }).catch(function() {
       hideTyping();
-      addMsg("bot", "Une erreur est survenue. Réessayez.", false);
+      addMsg("bot", T("error"), false);
     });
   }
 
@@ -345,15 +409,15 @@
 
   function markHumanSent() {
     humanBtn.disabled = true;
-    humanBtn.textContent = "Demande envoyée ✓";
+    humanBtn.textContent = T("sent");
   }
   humanBtn.onclick = function() {
     humanBtn.disabled = true;
-    humanBtn.textContent = "Envoi en cours…";
+    humanBtn.textContent = T("sending");
     fetch(CONTACT_URL, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ conversation_id: state.c, client_token: CLIENT_TOKEN })
+      body: JSON.stringify({ conversation_id: state.c, client_token: CLIENT_TOKEN, page_lang: pageLang() })
     }).then(function(res) { return res.json(); })
     .then(function(data) {
       state.c = data.conversation_id; state.h = true; persist();
@@ -362,12 +426,13 @@
       markHumanSent();
     }).catch(function() {
       humanBtn.disabled = false;
-      humanBtn.innerHTML = "&#128222; Parler à un humain";
+      humanBtn.textContent = "\u260E " + T("human");
     });
   };
 
   // ── Demarrage : apparence du client, puis restauration de la conversation ─
   function start() {
+    applyLang();
     for (var i = 0; i < state.m.length; i++) addMsg(state.m[i].r, state.m[i].t, false);
     if (state.h) markHumanSent();
     button.style.visibility = "visible";
@@ -379,4 +444,9 @@
     .then(function(cfg) { applyTheme(cfg || {}); startOnce(); })
     .catch(startOnce);
   setTimeout(startOnce, 2500);
+  applyLang();
+  // Le site peut changer de langue sans recharger la page (bouton FR/EN)
+  try {
+    new MutationObserver(applyLang).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
+  } catch (e) {}
 })();

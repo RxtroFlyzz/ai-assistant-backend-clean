@@ -17,7 +17,7 @@ const fr = {
   hero: {
     eyebrow: "Assistant IA pour boutiques en ligne",
     title1: "Vos clients ont des questions.",
-    title2: "Même à 3 h du matin.",
+    title2: "Même à 3 h du matin.",
     sub: "Replai leur répond à votre place, à toute heure : tailles, stocks, livraison, retours. Moins de ventes perdues, moins de messages à traiter.",
     cta: "Demander ma démo",
     secondary: "Voir un exemple",
