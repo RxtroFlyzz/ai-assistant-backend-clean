@@ -31,9 +31,6 @@ export default function Pricing() {
                       <span className="font-semibold text-emerald-300">{p.setupNew}</span>
                     </dd>
                   </div>
-                  <div className="flex items-center gap-2 font-semibold text-emerald-300">
-                    <Icon.check className="h-4 w-4" /> {p.firstMonth}
-                  </div>
                   <div className="text-slate-400">{p.noCommit}</div>
                 </dl>
                 <a href="#contact" className="btn-primary mt-8 w-full px-6 py-3.5 text-base">
