@@ -1,6 +1,7 @@
 // Tous les textes du site, en francais et en anglais.
 
 export const CONTACT_EMAIL = "contact@aireply.fr";
+export const BACKEND_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
 
 type Msg = { from: "user" | "bot"; text: string; link?: string; time?: string };
 
@@ -106,6 +107,21 @@ const fr = {
     cta: "Demander ma démo",
     subject: "Démo Replai pour ma boutique",
     reassurance: ["Démo gratuite", "Réponse sous 24 h", "Sans engagement"],
+    form: {
+      shop: "Adresse de votre boutique",
+      shopPh: "maboutique.com",
+      email: "Votre email",
+      emailPh: "vous@maboutique.com",
+      name: "Prénom",
+      phone: "Téléphone",
+      optional: "facultatif",
+      sending: "Envoi…",
+      successTitle: "C'est noté.",
+      success: "Votre démo personnalisée arrive sous 24 h à l'adresse {email}.",
+      again: "Faire une autre demande",
+      error: "L'envoi n'a pas fonctionné. Réessayez dans un instant.",
+      invalid: "Vérifiez l'adresse de la boutique et l'email.",
+    },
   },
   mascot: {
     day: "Bonjour ! Une question sur une taille ?",
@@ -220,6 +236,21 @@ const en: Copy = {
     cta: "Get my demo",
     subject: "Replai demo for my store",
     reassurance: ["Free demo", "Reply within 24 h", "No commitment"],
+    form: {
+      shop: "Your store's address",
+      shopPh: "mystore.com",
+      email: "Your email",
+      emailPh: "you@mystore.com",
+      name: "First name",
+      phone: "Phone",
+      optional: "optional",
+      sending: "Sending…",
+      successTitle: "Got it.",
+      success: "Your personalised demo will reach {email} within 24 h.",
+      again: "Send another request",
+      error: "Something went wrong. Please try again in a moment.",
+      invalid: "Please check the store address and email.",
+    },
   },
   mascot: {
     day: "Hi! A question about sizing?",

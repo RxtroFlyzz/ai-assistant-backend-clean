@@ -257,9 +257,13 @@ def classify_reply(visitor_message: str, step: str) -> str:
         return "YES"
 
 
+EMAIL_RE = re.compile(r"[^@\s<>]+@[^@\s<>]+\.[a-zA-Z]{2,}")
+
+
 def contains_contact_info(message: str) -> bool:
+    """Un numero (6 chiffres ou plus) ou une adresse email."""
     digits = re.sub(r'\D', '', message)
-    return len(digits) >= 6
+    return len(digits) >= 6 or bool(EMAIL_RE.search(message))
 
 
 # ── Gestion état ──────────────────────────────────────────────────────────────
@@ -317,7 +321,7 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
                 "<p><strong>Conversation :</strong> " + conv_id[:8] + "</p>"
                 "<p><strong>Coordonnees :</strong> "
                 "<span style='color:#4f8eff;font-weight:bold;font-size:16px'>"
-                + contact_info +
+                + html_lib.escape(contact_info) +
                 "</span></p>"
                 "<p>Recontactez ce client rapidement !</p>"
                 "<hr style='border:none;border-top:1px solid #eee'>"
@@ -1144,6 +1148,71 @@ def admin_overview(client_token: str, request: Request, days: int = 30, db: Sess
         "topics": question_topics(client_token, days, questions),
         "topics_sample": len(questions),
     }
+
+
+# ── Demandes de demo envoyees depuis aireply.fr ───────────────────────────────
+# Elles arrivent comme des "clients a rappeler" dans le dashboard de Replai
+# (client DEMO_LEADS_TOKEN) et par email a l'adresse de ce client.
+DEMO_LEADS_TOKEN = os.getenv("DEMO_LEADS_TOKEN", "replai_cb23fd")
+DEMO_RATE = {}   # ip -> [timestamps]
+
+
+class DemoRequest(BaseModel):
+    shop_url: str
+    email: str
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    lang: Optional[str] = None
+    website: Optional[str] = None   # champ piege : invisible pour un humain, rempli par les robots
+
+
+@app.post("/demo-request")
+def demo_request(req: DemoRequest, request: Request, db: Session = Depends(get_db)):
+    if req.website:
+        return {"ok": True}
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
+    now = time.time()
+    recent = [t for t in DEMO_RATE.get(ip, []) if now - t < 3600]
+    if len(recent) >= 5:
+        raise HTTPException(status_code=429, detail="Trop de demandes, reessayez plus tard")
+    DEMO_RATE[ip] = recent + [now]
+
+    shop = (req.shop_url or "").strip()[:200]
+    email = (req.email or "").strip()[:200]
+    name = (req.name or "").strip()[:80]
+    phone = (req.phone or "").strip()[:40]
+    if len(shop) < 4 or not EMAIL_RE.fullmatch(email):
+        raise HTTPException(status_code=400, detail="Adresse de boutique ou email invalide")
+
+    c = db.query(Client).filter(Client.token == DEMO_LEADS_TOKEN).first()
+    conv_id = str(uuid.uuid4())
+    db.add(Conversation(id=conv_id, title="Demande de demo", client_token=DEMO_LEADS_TOKEN if c else None))
+    db.commit()
+    save_message(conv_id, "user", "Demande de démo pour la boutique : " + shop, db)
+    contact = " · ".join(x for x in (name, email, phone) if x)
+    save_message(conv_id, "user", contact, db)
+    save_message(conv_id, "assistant", "Demande de démo reçue via le formulaire du site.", db)
+    set_state(conv_id, STATE_DONE, db)
+
+    if c and c.client_email:
+        try:
+            rows = [("Boutique", shop), ("Email", email), ("Prénom", name), ("Téléphone", phone),
+                    ("Langue du site", (req.lang or "")[:5])]
+            resend.Emails.send({
+                "from": "Replai <noreply@gianluca-ai.fr>",
+                "to": [c.client_email],
+                "reply_to": email,
+                "subject": "Nouvelle demande de démo - " + re.sub(r"^https?://(www\.)?", "", shop)[:80],
+                "html": (
+                    "<div style='font-family:Arial,sans-serif;max-width:600px'>"
+                    "<h2 style='color:#4f46e5'>Nouvelle demande de démo</h2>"
+                    + "".join("<p><strong>%s :</strong> %s</p>" % (k, html_lib.escape(v)) for k, v in rows if v)
+                    + "<p>Répondez directement à cet email pour écrire au prospect.</p></div>"
+                ),
+            })
+        except Exception as e:
+            print("DEMO EMAIL ERROR:", e)
+    return {"ok": True}
 
 
 @app.post("/contact-human")
