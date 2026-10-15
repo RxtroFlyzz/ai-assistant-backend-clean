@@ -85,6 +85,7 @@ const fr = {
     setupLabel: "Frais de mise en place",
     setupOld: "499 €",
     setupNew: "199 €",
+    insteadOf: "au lieu de",
     noCommit: "Sans engagement, résiliable à tout moment",
     note: "Offre réservée à nos premières marques partenaires.",
     features: [
@@ -198,6 +199,7 @@ const en: Copy = {
     setupLabel: "One-time setup fee",
     setupOld: "€499",
     setupNew: "€199",
+    insteadOf: "instead of",
     noCommit: "No commitment, cancel anytime",
     note: "Reserved for our first partner brands.",
     features: [

@@ -26,9 +26,12 @@ export default function Pricing() {
                 <dl className="mt-6 space-y-3 text-[15px]">
                   <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-3">
                     <dt className="text-slate-300">{p.setupLabel}</dt>
-                    <dd className="flex items-baseline gap-2">
-                      <span className="text-slate-500 line-through">{p.setupOld}</span>
+                    {/* Ordre du texte : "199 € au lieu de 499 €" (lu ainsi par l'assistant
+                        et les lecteurs d'ecran) ; affiche a l'envers : prix barre puis nouveau prix */}
+                    <dd className="flex flex-row-reverse items-baseline gap-2">
                       <span className="font-semibold text-emerald-300">{p.setupNew}</span>
+                      <span className="sr-only">{p.insteadOf}</span>
+                      <del className="text-slate-500">{p.setupOld}</del>
                     </dd>
                   </div>
                   <div className="text-slate-400">{p.noCommit}</div>
