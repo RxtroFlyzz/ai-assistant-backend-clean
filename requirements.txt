@@ -7,3 +7,4 @@ pydantic
 resend
 psycopg2-binary
 httpx
+tzdata

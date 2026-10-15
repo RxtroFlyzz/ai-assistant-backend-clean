@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Espace client</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent: #4f46e5;
+    --on-accent: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 10%, #ffffff);
+    --accent-mid: color-mix(in srgb, var(--accent) 35%, #ffffff);
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e7e9ee;
+    --ink: #0f172a;
+    --ink-2: #475569;
+    --ink-3: #94a3b8;
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --warn: #b45309;
+    --warn-soft: #fff7ed;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  a { color: inherit; }
+  .hidden { display: none !important; }
+  svg.i { width: 16px; height: 16px; flex-shrink: 0; }
+
+  /* Marque */
+  .mark { width: 36px; height: 36px; border-radius: 10px; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; overflow: hidden; flex-shrink: 0; }
+  .mark img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
+  .mark.lg { width: 56px; height: 56px; border-radius: 14px; font-size: 24px; }
+
+  /* Connexion */
+  #login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-card { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 36px 30px; text-align: center; box-shadow: 0 20px 50px -30px rgba(15,23,42,.25); }
+  .login-card h1 { font-size: 20px; font-weight: 700; margin-top: 18px; }
+  .login-card .sub { color: var(--ink-2); margin-top: 6px; margin-bottom: 26px; }
+  .field { position: relative; }
+  .field input { width: 100%; padding: 12px 44px 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; outline: none; font-size: 15px; }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: var(--ink-3); padding: 6px; display: flex; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; padding: 9px 14px; font-weight: 600; border: 1px solid var(--line); background: #fff; transition: background .15s, border-color .15s, opacity .15s; white-space: nowrap; }
+  .btn:hover { border-color: var(--ink-3); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn-primary:hover { opacity: .9; border-color: var(--accent); }
+  .btn-block { width: 100%; padding: 12px; margin-top: 12px; font-size: 15px; }
+  .btn-sm { padding: 6px 10px; font-size: 13px; border-radius: 8px; }
+  .btn-ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+  .btn-ghost:hover { background: #eef0f3; border-color: transparent; }
+  .err { margin-top: 12px; color: #b91c1c; font-size: 13px; }
+  .powered { margin-top: 22px; font-size: 12px; color: var(--ink-3); }
+
+  /* En-tete */
+  header { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .hdr { max-width: 1180px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand-name { font-weight: 700; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand-link { font-size: 12px; color: var(--ink-2); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+  .brand-link:hover { color: var(--accent); }
+  .tabs { display: flex; gap: 4px; margin-left: 12px; }
+  .tab { border: 0; background: transparent; padding: 8px 12px; border-radius: 8px; font-weight: 600; color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; }
+  .tab:hover { background: #eef0f3; }
+  .tab.active { background: var(--accent-soft); color: var(--accent); }
+  .count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+  .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  select.period { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff; font-weight: 500; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+  .page-title { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+  .page-sub { color: var(--ink-2); margin-top: 4px; }
+
+  /* Cartes */
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .card-h { padding: 18px 20px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .card-h h2 { font-size: 15px; font-weight: 600; }
+  .card-h .hint { font-size: 12px; color: var(--ink-3); }
+  .card-b { padding: 16px 20px 20px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 20px; }
+  .kpi { padding: 18px 20px; }
+  .kpi-l { font-size: 13px; color: var(--ink-2); font-weight: 500; }
+  .kpi-n { font-size: 30px; font-weight: 700; letter-spacing: -.02em; margin-top: 8px; line-height: 1; }
+  .kpi-s { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+  .kpi.accent { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .kpi.accent .kpi-l, .kpi.accent .kpi-s { color: var(--on-accent); opacity: .8; }
+  .delta-up { color: var(--ok); font-weight: 600; }
+  .delta-down { color: #b91c1c; font-weight: 600; }
+
+  .grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; margin-top: 14px; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+
+  /* Clients a rappeler */
+  .lead { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .lead:first-child { border-top: 0; padding-top: 0; }
+  .lead-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-top: 7px; flex-shrink: 0; }
+  .lead.done .lead-dot { background: var(--ok); }
+  .lead-body { flex: 1; min-width: 0; }
+  .lead-contact { font-weight: 600; font-size: 15px; word-break: break-word; }
+  .lead-q { color: var(--ink-2); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .lead-meta { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+  .lead-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .lead.done .lead-contact { color: var(--ink-2); font-weight: 500; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .empty { color: var(--ink-3); text-align: center; padding: 28px 10px; }
+  .link-btn { background: none; border: 0; color: var(--accent); font-weight: 600; padding: 0; font-size: 13px; }
+
+  /* Graphiques */
+  .chart { width: 100%; display: block; }
+  .chart { height: 140px; }
+  .chart-wrap { position: relative; padding-bottom: 20px; }
+  .xlabels { position: absolute; left: 0; right: 0; bottom: 0; height: 16px; }
+  .xlabels span { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+  .callout { display: flex; gap: 10px; align-items: flex-start; background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; margin-top: 14px; color: var(--ink); }
+  .callout strong { color: var(--accent); }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-top: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* Themes */
+  .topic { padding: 10px 0; }
+  .topic + .topic { border-top: 1px solid var(--line); }
+  .topic-row { display: flex; justify-content: space-between; gap: 10px; font-weight: 600; }
+  .topic-row span:last-child { color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+  .bar { height: 6px; background: #eef0f3; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .topic-ex { color: var(--ink-3); font-size: 12px; margin-top: 6px; font-style: italic; }
+
+  /* Conversations */
+  .convs { display: grid; grid-template-columns: 340px 1fr; gap: 14px; margin-top: 20px; height: calc(100vh - 190px); min-height: 480px; }
+  .clist { display: flex; flex-direction: column; overflow: hidden; }
+  .ctools { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+  .search { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; outline: none; }
+  .search:focus { border-color: var(--accent); }
+  .chips { display: flex; gap: 6px; }
+  .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  .chip.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .citems { overflow-y: auto; flex: 1; padding: 6px; }
+  .ci { padding: 12px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; }
+  .ci:hover { background: #f8fafc; }
+  .ci.active { background: var(--accent-soft); border-color: var(--accent-mid); }
+  .ci-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .ci-date { font-size: 12px; color: var(--ink-3); }
+  .ci-prev { margin-top: 4px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ci-meta { margin-top: 4px; font-size: 12px; color: var(--ink-3); }
+  .cview { display: flex; flex-direction: column; overflow: hidden; }
+  .cview-h { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .cview-h h3 { font-size: 15px; }
+  .cview-h p { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+  .msgs { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; background: #fbfbfc; }
+  .m { max-width: 78%; display: flex; flex-direction: column; }
+  .m.user { align-self: flex-start; }
+  .m.assistant { align-self: flex-end; align-items: flex-end; }
+  .m-who { font-size: 11px; color: var(--ink-3); margin: 0 4px 4px; }
+  .m-t { padding: 10px 14px; border-radius: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .m.user .m-t { background: #fff; border: 1px solid var(--line); border-top-left-radius: 4px; }
+  .m.assistant .m-t { background: var(--accent); color: var(--on-accent); border-top-right-radius: 4px; }
+  .back { display: none; }
+
+  .loading { opacity: .5; pointer-events: none; }
+  .skeleton { color: transparent !important; background: #eef0f3; border-radius: 6px; }
+
+  @media (max-width: 960px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    .hdr { flex-wrap: wrap; padding: 10px 14px; gap: 10px; }
+    .tabs { order: 3; width: 100%; margin-left: 0; }
+    .tab { flex: 1; justify-content: center; }
+    .brand-link { display: none; }
+    main { padding: 18px 14px 50px; }
+    .kpi-n { font-size: 26px; }
+    .convs { grid-template-columns: 1fr; height: auto; }
+    .convs.detail .clist { display: none; }
+    .convs:not(.detail) .cview { display: none; }
+    .cview { min-height: 70vh; }
+    .back { display: inline-flex; }
+    .m { max-width: 90%; }
+    .lead { flex-wrap: wrap; }
+    .lead-actions { flex-direction: row; width: 100%; padding-left: 22px; justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Connexion -->
+<section id="login" class="hidden">
+  <div class="login-card">
+    <span class="mark lg" id="loginMark"></span>
+    <h1 id="loginName">Espace client</h1>
+    <p class="sub">Vos conversations et vos clients à rappeler</p>
+    <form id="loginForm">
+      <div class="field">
+        <input type="password" id="pwd" placeholder="Mot de passe" autocomplete="current-password" required>
+        <button type="button" class="eye" id="eyeBtn" aria-label="Afficher le mot de passe">
+          <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+    </form>
+    <p class="err hidden" id="loginErr"></p>
+    <p class="powered">Assistant propulsé par Replai</p>
+  </div>
+</section>
+
+<!-- Application -->
+<section id="app" class="hidden">
+  <header>
+    <div class="hdr">
+      <div class="brand">
+        <span class="mark" id="appMark"></span>
+        <div style="min-width:0">
+          <div class="brand-name" id="appName"></div>
+          <a class="brand-link hidden" id="shopLink" target="_blank" rel="noopener">
+            <span id="shopDomain"></span>
+            <svg class="i" style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+          </a>
+        </div>
+      </div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="overview">Vue d'ensemble</button>
+        <button class="tab" data-tab="conversations">Conversations <span class="count hidden" id="tabCount"></span></button>
+      </nav>
+      <div class="hdr-right">
+        <select class="period" id="period" aria-label="Période">
+          <option value="7">7 jours</option>
+          <option value="30" selected>30 jours</option>
+          <option value="90">90 jours</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" id="refreshBtn" title="Actualiser" aria-label="Actualiser">
+          <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="logoutBtn">Déconnexion</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Vue d'ensemble -->
+    <div id="tab-overview">
+      <h1 class="page-title" id="hello">Vue d'ensemble</h1>
+      <p class="page-sub" id="periodLabel"></p>
+
+      <div class="kpis">
+        <div class="card kpi">
+          <div class="kpi-l">Conversations</div>
+          <div class="kpi-n" id="kConv">–</div>
+          <div class="kpi-s" id="kConvS">&nbsp;</div>
+        </div>
+        <div class="card kpi accent">
+          <div class="kpi-l">Clients à rappeler</div>
+          <div class="kpi-n" id="kLeads">–</div>
+          <div class="kpi-s" id="kLeadsS">&nbsp;</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-l">Hors horaires de bureau</div>
+          <div class="kpi-n" id="kAfter">–</div>
+          <div class="kpi-s" id="kAfterS">&nbsp;</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-l">Questions répondues</div>
+          <div class="kpi-n" id="kMsgs">–</div>
+          <div class="kpi-s">Messages de visiteurs traités par l'assistant</div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-h"><h2>Clients à rappeler</h2><span class="hint" id="leadsHint"></span></div>
+          <div class="card-b" id="leadsBox"></div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-h"><h2>Quand vos clients écrivent</h2><span class="hint">heure de Paris</span></div>
+            <div class="card-b">
+              <div id="hoursChart"></div>
+              <div class="legend">
+                <span><i class="sw" style="background:var(--accent)"></i>Soir et nuit (20 h – 8 h)</span>
+                <span><i class="sw" style="background:var(--accent-mid)"></i>Journée</span>
+              </div>
+              <div class="callout hidden" id="hoursCallout"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Questions les plus posées</h2><span class="hint">regroupées par l'IA</span></div>
+            <div class="card-b" id="topicsBox"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="card-h"><h2>Conversations par jour</h2><span class="hint" id="daysHint"></span></div>
+        <div class="card-b"><div id="daysChart"></div></div>
+      </div>
+    </div>
+
+    <!-- Conversations -->
+    <div id="tab-conversations" class="hidden">
+      <h1 class="page-title">Conversations</h1>
+      <p class="page-sub">Tout ce que vos visiteurs ont demandé, et ce que l'assistant a répondu.</p>
+      <div class="convs" id="convs">
+        <div class="card clist">
+          <div class="ctools">
+            <input class="search" id="search" placeholder="Rechercher un mot, un numéro…">
+            <div class="chips">
+              <button class="chip active" data-filter="all">Toutes</button>
+              <button class="chip" data-filter="leads">À rappeler</button>
+            </div>
+          </div>
+          <div class="citems" id="citems"></div>
+        </div>
+        <div class="card cview" id="cview">
+          <div class="empty" style="margin:auto">Sélectionnez une conversation</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<script>
+(function () {
+  var clientToken = new URLSearchParams(location.search).get("token") || "";
+  var KEY = "rpl_admin_" + clientToken;
+  var pwd = "";
+  try { pwd = localStorage.getItem(KEY) || ""; } catch (e) {}
+  var brand = { name: "", color: "", domain: "", assistant_name: "" };
+  var convs = [];
+  var filter = "all";
+  var activeId = null;
+  var days = 30;
+  try { days = parseInt(localStorage.getItem("rpl_admin_days") || "30", 10) || 30; } catch (e) {}
+  document.getElementById("period").value = String(days);
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "X-Admin-Password": pwd, "Content-Type": "application/json" }, opts.headers || {});
+    var sep = path.indexOf("?") < 0 ? "?" : "&";
+    return fetch(path + sep + "client_token=" + encodeURIComponent(clientToken), opts).then(function (r) {
+      if (r.status === 401) { logout(); throw new Error("401"); }
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    });
+  }
+
+  // ── Habillage aux couleurs du client ────────────────────────────────────
+  function luminance(hex) {
+    var n = parseInt(hex.slice(1), 16);
+    var c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(function (v) {
+      v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  function applyBrand(b) {
+    brand = Object.assign(brand, b || {});
+    var color = /^#[0-9a-fA-F]{6}$/.test(brand.color || "") ? brand.color : "#4f46e5";
+    if (luminance(color) > 0.75) color = "#111827";   // couleur trop claire pour du texte
+    var root = document.documentElement.style;
+    root.setProperty("--accent", color);
+    root.setProperty("--on-accent", luminance(color) > 0.45 ? "#111827" : "#ffffff");
+    var name = brand.name || "Espace client";
+    document.title = name + " · Espace client";
+    $("loginName").textContent = name;
+    $("appName").textContent = name;
+    [$("loginMark"), $("appMark")].forEach(function (el) { setMark(el, name, brand.domain); });
+    if (brand.domain) {
+      $("shopLink").href = brand.shop_url || ("https://" + brand.domain);
+      $("shopDomain").textContent = brand.domain;
+      $("shopLink").classList.remove("hidden");
+    }
+  }
+  function setMark(el, name, domain) {
+    el.textContent = (name || "R").trim().charAt(0).toUpperCase();
+    if (!domain) return;
+    var img = new Image();
+    img.alt = "";
+    img.onload = function () {
+      if (img.naturalWidth >= 32) { el.textContent = ""; el.appendChild(img); }
+    };
+    img.src = "https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(domain);
+  }
+
+  // ── Connexion ───────────────────────────────────────────────────────────
+  function showLogin() {
+    $("app").classList.add("hidden");
+    $("login").classList.remove("hidden");
+    setTimeout(function () { $("pwd").focus(); }, 50);
+  }
+  function login(p, silent) {
+    return fetch("/admin/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_token: clientToken, password: p })
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(function (d) {
+      pwd = p;
+      try { localStorage.setItem(KEY, p); } catch (e) {}
+      applyBrand({ name: d.name || d.business_name, color: d.color, domain: d.domain, shop_url: d.shop_url, assistant_name: d.assistant_name });
+      $("login").classList.add("hidden");
+      $("app").classList.remove("hidden");
+      loadAll();
+    }).catch(function (e) {
+      if (silent) { showLogin(); return; }
+      $("loginErr").textContent = e.message === "401" ? "Mot de passe incorrect." : "Connexion impossible. Réessayez dans un instant.";
+      $("loginErr").classList.remove("hidden");
+    });
+  }
+  function logout() {
+    pwd = "";
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    $("pwd").value = "";
+    showLogin();
+  }
+  $("loginForm").onsubmit = function (e) {
+    e.preventDefault();
+    $("loginErr").classList.add("hidden");
+    login($("pwd").value, false);
+  };
+  $("eyeBtn").onclick = function () { var i = $("pwd"); i.type = i.type === "password" ? "text" : "password"; };
+  $("logoutBtn").onclick = logout;
+
+  // ── Onglets et periode ──────────────────────────────────────────────────
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.onclick = function () { showTab(t.getAttribute("data-tab")); };
+  });
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("active", t.getAttribute("data-tab") === name); });
+    $("tab-overview").classList.toggle("hidden", name !== "overview");
+    $("tab-conversations").classList.toggle("hidden", name !== "conversations");
+    window.scrollTo(0, 0);
+  }
+  $("period").onchange = function () {
+    days = parseInt(this.value, 10);
+    try { localStorage.setItem("rpl_admin_days", String(days)); } catch (e) {}
+    loadOverview();
+  };
+  $("refreshBtn").onclick = loadAll;
+
+  function loadAll() { loadOverview(); loadConvs(); }
+
+  // ── Vue d'ensemble ──────────────────────────────────────────────────────
+  function fmtDate(s, withTime) {
+    if (!s) return "";
+    var d = new Date(s.replace(" ", "T"));
+    if (isNaN(d)) return s;
+    var opts = { day: "numeric", month: "short" };
+    if (withTime) { opts.hour = "2-digit"; opts.minute = "2-digit"; }
+    return d.toLocaleString("fr-FR", opts);
+  }
+  function plural(n, one, many) { return n + " " + (n > 1 ? many : one); }
+
+  function loadOverview() {
+    $("tab-overview").classList.add("loading");
+    api("/admin/overview?days=" + days).then(renderOverview).catch(function () {})
+      .then(function () { $("tab-overview").classList.remove("loading"); });
+  }
+
+  function renderOverview(d) {
+    $("periodLabel").textContent = "Les " + d.days + " derniers jours";
+    $("kConv").textContent = d.conversations;
+    var diff = d.conversations - d.previous_conversations;
+    if (d.previous_conversations > 0) {
+      var pct = Math.round(100 * diff / d.previous_conversations);
+      $("kConvS").innerHTML = "<span class='" + (pct >= 0 ? "delta-up" : "delta-down") + "'>" + (pct >= 0 ? "+" : "") + pct + " %</span> vs période précédente";
+    } else {
+      $("kConvS").textContent = d.conversations ? "Première période mesurée" : "Pas encore de conversation";
+    }
+    $("kLeads").textContent = d.open_leads;
+    $("kLeadsS").textContent = d.open_leads ? "En attente de votre appel" : (d.leads_period ? "Tout est traité" : "Aucune demande pour l'instant");
+    $("kAfter").textContent = d.conversations ? d.after_hours_pct + " %" : "–";
+    $("kAfterS").textContent = d.conversations ? plural(d.after_hours, "conversation", "conversations") + " le soir, la nuit ou le week-end" : "Le soir, la nuit et le week-end";
+    $("kMsgs").textContent = d.visitor_messages;
+
+    var tc = $("tabCount");
+    tc.textContent = d.open_leads;
+    tc.classList.toggle("hidden", !d.open_leads);
+
+    renderLeads(d.leads);
+    renderHours(d.hours, d.conversations, d.after_hours_pct);
+    renderTopics(d.topics, d.topics_sample);
+    renderDays(d.per_day);
+  }
+
+  var showDone = false;
+  function renderLeads(leads) {
+    var open = leads.filter(function (l) { return !l.handled; });
+    var done = leads.filter(function (l) { return l.handled; });
+    $("leadsHint").textContent = done.length ? plural(done.length, "traité", "traités") : "";
+    var box = $("leadsBox");
+    if (!leads.length) {
+      box.innerHTML = "<div class='empty'>Aucun client à rappeler pour l'instant.<br>Quand un visiteur laisse ses coordonnées, il apparaît ici et vous recevez un email.</div>";
+      return;
+    }
+    var html = open.length ? "" : "<div class='empty' style='padding:14px'>Tout est traité. Bravo.</div>";
+    open.forEach(function (l) { html += leadHtml(l); });
+    if (done.length) {
+      html += "<div style='padding-top:12px'><button class='link-btn' id='toggleDone'>" + (showDone ? "Masquer" : "Afficher") + " les demandes traitées (" + done.length + ")</button></div>";
+      if (showDone) done.forEach(function (l) { html += leadHtml(l); });
+    }
+    box.innerHTML = html;
+    box.querySelectorAll("[data-handle]").forEach(function (b) {
+      b.onclick = function () { setHandled(b.getAttribute("data-handle"), b.getAttribute("data-v") === "1"); };
+    });
+    box.querySelectorAll("[data-open]").forEach(function (b) {
+      b.onclick = function () { openConv(b.getAttribute("data-open")); };
+    });
+    var t = $("toggleDone");
+    if (t) t.onclick = function () { showDone = !showDone; renderLeads(leads); };
+  }
+  function leadHtml(l) {
+    return "<div class='lead" + (l.handled ? " done" : "") + "'>"
+      + "<span class='lead-dot'></span>"
+      + "<div class='lead-body'>"
+      + "<div class='lead-contact'>" + esc(l.contact || "Coordonnées non détectées") + "</div>"
+      + (l.question ? "<div class='lead-q'>" + esc(l.question) + "</div>" : "")
+      + "<div class='lead-meta'>" + esc(fmtDate(l.created_at, true)) + "</div>"
+      + "</div>"
+      + "<div class='lead-actions'>"
+      + (l.handled
+          ? "<button class='btn btn-sm' data-handle='" + esc(l.id) + "' data-v='0'>Remettre à rappeler</button>"
+          : "<button class='btn btn-sm btn-primary' data-handle='" + esc(l.id) + "' data-v='1'>Marquer comme traité</button>")
+      + "<button class='link-btn' data-open='" + esc(l.id) + "'>Voir la conversation</button>"
+      + "</div></div>";
+  }
+  function setHandled(id, v) {
+    api("/admin/conversations/" + encodeURIComponent(id) + "/handled", { method: "POST", body: JSON.stringify({ handled: v }) })
+      .then(function () { loadAll(); if (activeId === id) openConv(id); });
+  }
+
+  function svgBars(values, opts) {
+    var W = 600, H = opts.h || 150, padB = 1, padT = 8, labels = "";
+    var n = values.length, max = Math.max.apply(null, values.concat([1]));
+    var gap = opts.gap == null ? 3 : opts.gap;
+    var bw = (W - gap * (n - 1)) / n;
+    var out = "<svg class='chart' viewBox='0 0 " + W + " " + H + "' preserveAspectRatio='none' role='img' aria-label='" + esc(opts.label) + "'>";
+    out += "<line x1='0' x2='" + W + "' y1='" + (H - padB) + "' y2='" + (H - padB) + "' stroke='#e7e9ee'/>";
+    values.forEach(function (v, i) {
+      var h = v ? Math.max(3, (H - padB - padT) * v / max) : 0;
+      var x = i * (bw + gap), y = H - padB - h;
+      out += "<rect x='" + x.toFixed(1) + "' y='" + y.toFixed(1) + "' width='" + bw.toFixed(1) + "' height='" + h.toFixed(1) + "' rx='2' fill='" + opts.color(i) + "'><title>" + esc(opts.tip(i, v)) + "</title></rect>";
+      var lab = opts.xlabel(i);
+      if (lab) labels += "<span style='left:" + (100 * (x + bw / 2) / W).toFixed(2) + "%'>" + esc(lab) + "</span>";
+    });
+    // Les libelles sont en HTML : le SVG s'etire en largeur, le texte ne doit pas se deformer
+    return "<div class='chart-wrap'>" + out + "</svg><div class='xlabels'>" + labels + "</div></div>";
+  }
+  function renderHours(hours, total, pct) {
+    if (!total) {
+      $("hoursChart").innerHTML = "<div class='empty'>Le graphique apparaîtra après les premières conversations.</div>";
+      $("hoursCallout").classList.add("hidden");
+      return;
+    }
+    $("hoursChart").innerHTML = svgBars(hours, {
+      h: 140, label: "Conversations par heure",
+      color: function (i) { return (i >= 20 || i < 8) ? "var(--accent)" : "var(--accent-mid)"; },
+      tip: function (i, v) { return i + " h – " + (i + 1) + " h : " + plural(v, "conversation", "conversations"); },
+      xlabel: function (i) { return i % 4 === 0 ? i + "h" : ""; }
+    });
+    var c = $("hoursCallout");
+    c.innerHTML = "<span><strong>" + pct + " %</strong> de vos conversations ont lieu le soir, la nuit ou le week-end, quand personne n'est là pour répondre. L'assistant s'en est chargé.</span>";
+    c.classList.toggle("hidden", !pct);
+  }
+  function renderDays(perDay) {
+    var vals = perDay.map(function (p) { return p.count; });
+    var total = vals.reduce(function (a, b) { return a + b; }, 0);
+    $("daysHint").textContent = plural(total, "conversation", "conversations");
+    var step = Math.ceil(perDay.length / 8);
+    $("daysChart").innerHTML = svgBars(vals, {
+      h: 130, gap: perDay.length > 40 ? 1 : 3, label: "Conversations par jour",
+      color: function () { return "var(--accent)"; },
+      tip: function (i, v) { return fmtDate(perDay[i].date) + " : " + plural(v, "conversation", "conversations"); },
+      xlabel: function (i) { return (perDay.length - 1 - i) % step === 0 ? fmtDate(perDay[i].date) : ""; }
+    });
+  }
+  function renderTopics(topics, sample) {
+    var box = $("topicsBox");
+    if (!topics || !topics.length) {
+      box.innerHTML = "<div class='empty'>" + (sample < 3
+        ? "Les thèmes apparaîtront dès quelques conversations."
+        : "Analyse indisponible pour le moment. Réessayez plus tard.") + "</div>";
+      return;
+    }
+    var max = Math.max.apply(null, topics.map(function (t) { return t.count; }).concat([1]));
+    box.innerHTML = topics.map(function (t) {
+      return "<div class='topic'><div class='topic-row'><span>" + esc(t.title) + "</span><span>" + plural(t.count, "question", "questions") + "</span></div>"
+        + "<div class='bar'><i style='width:" + Math.round(100 * t.count / max) + "%'></i></div>"
+        + (t.example ? "<div class='topic-ex'>« " + esc(t.example) + " »</div>" : "") + "</div>";
+    }).join("");
+  }
+
+  // ── Conversations ───────────────────────────────────────────────────────
+  function loadConvs() {
+    api("/admin/conversations").then(function (data) { convs = data; renderConvList(); }).catch(function () {});
+  }
+  $("search").oninput = renderConvList;
+  document.querySelectorAll(".chip").forEach(function (c) {
+    c.onclick = function () {
+      filter = c.getAttribute("data-filter");
+      document.querySelectorAll(".chip").forEach(function (x) { x.classList.toggle("active", x === c); });
+      renderConvList();
+    };
+  });
+  function renderConvList() {
+    var q = $("search").value.trim().toLowerCase();
+    var list = convs.filter(function (c) {
+      if (!c.message_count) return false;
+      if (filter === "leads" && !c.needs_human) return false;
+      if (!q) return true;
+      return ((c.preview || "") + " " + (c.contact_info || "")).toLowerCase().indexOf(q) >= 0;
+    });
+    var box = $("citems");
+    if (!list.length) { box.innerHTML = "<div class='empty'>Aucune conversation</div>"; return; }
+    box.innerHTML = list.map(function (c) {
+      var badge = c.needs_human ? (c.handled ? "<span class='pill ok'>Traité</span>" : "<span class='pill warn'>À rappeler</span>") : "";
+      return "<div class='ci" + (c.id === activeId ? " active" : "") + "' data-id='" + esc(c.id) + "'>"
+        + "<div class='ci-top'><span class='ci-date'>" + esc(fmtDate(c.created_at, true)) + "</span>" + badge + "</div>"
+        + "<div class='ci-prev'>" + esc(c.preview || "Conversation") + "</div>"
+        + "<div class='ci-meta'>" + plural(c.message_count, "message", "messages") + (c.contact_info ? " · " + esc(c.contact_info) : "") + "</div>"
+        + "</div>";
+    }).join("");
+    box.querySelectorAll(".ci").forEach(function (el) {
+      el.onclick = function () { openConv(el.getAttribute("data-id")); };
+    });
+  }
+  function openConv(id) {
+    showTab("conversations");
+    activeId = id;
+    renderConvList();
+    $("convs").classList.add("detail");
+    var meta = convs.filter(function (c) { return c.id === id; })[0] || {};
+    var view = $("cview");
+    view.innerHTML = "<div class='empty' style='margin:auto'>Chargement…</div>";
+    api("/admin/conversations/" + encodeURIComponent(id)).then(function (msgs) {
+      var bot = brand.assistant_name || "Assistant";
+      var head = "<div class='cview-h'><div>"
+        + "<button class='btn btn-ghost btn-sm back' id='backBtn'>← Retour</button>"
+        + "<h3>" + esc(fmtDate(meta.created_at, true) || "Conversation") + "</h3>"
+        + "<p>" + plural(msgs.length, "message", "messages") + (meta.contact_info ? " · " + esc(meta.contact_info) : "") + "</p></div>";
+      if (meta.needs_human) {
+        head += meta.handled
+          ? "<button class='btn btn-sm' data-handle='" + esc(id) + "' data-v='0'>Remettre à rappeler</button>"
+          : "<button class='btn btn-sm btn-primary' data-handle='" + esc(id) + "' data-v='1'>Marquer comme traité</button>";
+      }
+      head += "</div>";
+      var body = "<div class='msgs' id='msgs'>" + msgs.map(function (m) {
+        var who = m.role === "user" ? "Visiteur" : bot;
+        var at = m.at ? " · " + new Date(m.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
+        return "<div class='m " + (m.role === "user" ? "user" : "assistant") + "'><div class='m-who'>" + esc(who + at) + "</div><div class='m-t'>" + esc(m.content) + "</div></div>";
+      }).join("") + "</div>";
+      view.innerHTML = head + body;
+      var mb = $("msgs"); mb.scrollTop = mb.scrollHeight;
+      $("backBtn").onclick = function () { $("convs").classList.remove("detail"); };
+      view.querySelectorAll("[data-handle]").forEach(function (b) {
+        b.onclick = function () { setHandled(b.getAttribute("data-handle"), b.getAttribute("data-v") === "1"); };
+      });
+    }).catch(function () {
+      view.innerHTML = "<div class='empty' style='margin:auto'>Impossible de charger cette conversation.</div>";
+    });
+  }
+
+  // ── Demarrage ───────────────────────────────────────────────────────────
+  if (!clientToken) {
+    document.body.innerHTML = "<div class='empty' style='padding-top:30vh'>Lien incomplet : utilisez le lien personnel envoyé par Replai.</div>";
+    return;
+  }
+  fetch("/admin/brand?client_token=" + encodeURIComponent(clientToken))
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .then(applyBrand).catch(function () { applyBrand({}); })
+    .then(function () { if (pwd) login(pwd, true); else showLogin(); });
+})();
+</script>
+</body>
+</html>

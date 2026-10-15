@@ -14,7 +14,12 @@ import json
 import html as html_lib
 import httpx
 import resend
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo
+    LOCAL_TZ = ZoneInfo("Europe/Paris")
+except Exception:  # pas de base de fuseaux : heure de Paris approximative
+    LOCAL_TZ = timezone(timedelta(hours=1))
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -44,6 +49,7 @@ MIGRATIONS = [
     ("conversations.state", "ALTER TABLE conversations ADD COLUMN state VARCHAR DEFAULT 'normal'"),
     ("clients.shop_url",    "ALTER TABLE clients ADD COLUMN shop_url VARCHAR"),
     ("clients.widget_config", "ALTER TABLE clients ADD COLUMN widget_config TEXT"),
+    ("conversations.handled", "ALTER TABLE conversations ADD COLUMN handled BOOLEAN DEFAULT FALSE"),
 ]
 
 def run_migrations():
@@ -842,563 +848,138 @@ def catalog_preview(token: str, superadmin_password: str, refresh: bool = False,
 
 
 # ── Dashboard Admin ───────────────────────────────────────────────────────────
-ADMIN_HTML = """<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Replai Admin</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
-
-    /* ── LOGIN ── */
-    #login { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
-    .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 40px 32px; width: 100%; max-width: 380px; text-align: center; }
-    .logo { width: 52px; height: 52px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 24px; }
-    .card h2 { font-size: 22px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; }
-    .card .sub { font-size: 14px; color: #64748b; margin-bottom: 28px; }
-    .pwd-row { position: relative; margin-bottom: 12px; }
-    .pwd-row input { width: 100%; padding: 12px 44px 12px 16px; background: #0f1117; border: 1px solid #2d3148; border-radius: 10px; color: #f1f5f9; font-size: 15px; font-family: 'Inter', sans-serif; outline: none; }
-    .pwd-row input:focus { border-color: #6366f1; }
-    .eye { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 16px; user-select: none; }
-    .btn-login { width: 100%; padding: 13px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; font-family: 'Inter', sans-serif; cursor: pointer; }
-    .btn-login:hover { opacity: 0.9; }
-    .err { color: #f87171; font-size: 13px; margin-top: 12px; padding: 10px; background: rgba(127,29,29,0.2); border: 1px solid #7f1d1d; border-radius: 8px; display: none; }
-
-    /* ── DASHBOARD ── */
-    #dashboard { display: none; }
-
-    /* ── TOP BAR (mobile) ── */
-    .topbar { display: none; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1a1d27; border-bottom: 1px solid #2d3148; position: sticky; top: 0; z-index: 100; }
-    .topbar-brand { display: flex; align-items: center; gap: 8px; }
-    .topbar-icon { width: 28px; height: 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
-    .topbar-name { font-size: 14px; font-weight: 600; color: #f1f5f9; }
-    .btn-menu { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; font-size: 18px; width: 36px; height: 36px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-
-    /* ── STATS BAR (mobile) ── */
-    .stats-bar { display: none; gap: 8px; padding: 12px 16px; background: #0f1117; border-bottom: 1px solid #2d3148; overflow-x: auto; }
-    .stats-bar::-webkit-scrollbar { display: none; }
-    .stat-pill { background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px; padding: 10px 14px; flex-shrink: 0; text-align: center; min-width: 80px; }
-    .stat-pill .sp-n { display: block; font-size: 20px; font-weight: 700; color: #f1f5f9; line-height: 1; }
-    .stat-pill .sp-l { font-size: 10px; color: #64748b; margin-top: 3px; display: block; }
-    .stat-pill.highlight { border-color: #6366f1; background: rgba(99,102,241,0.08); }
-    .stat-pill.highlight .sp-n { color: #818cf8; }
-    .stat-pill.success .sp-n { color: #34d399; }
-
-    /* ── DESKTOP LAYOUT ── */
-    .layout { display: flex; height: 100vh; }
-    .sidebar { width: 280px; background: #1a1d27; border-right: 1px solid #2d3148; display: flex; flex-direction: column; flex-shrink: 0; }
-    .sb-top { padding: 20px; border-bottom: 1px solid #2d3148; }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-    .brand-icon { width: 32px; height: 32px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; }
-    .brand-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
-
-    /* Stats desktop — 3 colonnes */
-    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
-    .stat { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 8px 6px; text-align: center; }
-    .stat.highlight { border-color: #6366f1; background: rgba(99,102,241,0.08); }
-    .stat.success { }
-    .stat-n { display: block; font-size: 17px; font-weight: 700; color: #f1f5f9; }
-    .stat.highlight .stat-n { color: #818cf8; }
-    .stat.success .stat-n { color: #34d399; }
-    .stat-l { font-size: 10px; color: #64748b; }
-
-    .sb-mid { padding: 12px 16px; border-bottom: 1px solid #2d3148; display: flex; flex-direction: column; gap: 8px; }
-    .search-input { width: 100%; padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #f1f5f9; font-size: 13px; font-family: 'Inter', sans-serif; outline: none; }
-    .search-input:focus { border-color: #6366f1; }
-    .btn-refresh { width: 100%; padding: 9px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; color: #94a3b8; font-size: 13px; font-family: 'Inter', sans-serif; cursor: pointer; }
-    .btn-refresh:hover { border-color: #6366f1; color: #6366f1; }
-    .conv-list { flex: 1; overflow-y: auto; padding: 8px; }
-    .conv-list::-webkit-scrollbar { width: 3px; }
-    .conv-list::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 2px; }
-    .ci { padding: 12px 14px; border-radius: 10px; margin-bottom: 4px; cursor: pointer; border: 1px solid transparent; }
-    .ci:hover { background: #0f1117; border-color: #2d3148; }
-    .ci.active { background: #1e2035; border-color: #6366f1; }
-    .ci.urgent { border-left: 3px solid #f87171; }
-    .ci-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-    .ci-id { font-size: 13px; font-weight: 500; color: #e2e8f0; font-family: monospace; }
-    .badge { background: #7f1d1d; color: #fca5a5; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
-    .ci-meta { font-size: 11px; color: #475569; }
-    .contact-info { background: rgba(79,142,255,0.1); border: 1px solid rgba(79,142,255,0.3); border-radius: 8px; padding: 6px 10px; margin-top: 6px; font-size: 12px; color: #4f8eff; }
-    .sb-bot { padding: 12px 16px; border-top: 1px solid #2d3148; }
-    .btn-logout { width: 100%; padding: 8px; background: transparent; border: 1px solid #2d3148; border-radius: 8px; color: #64748b; font-size: 12px; font-family: 'Inter', sans-serif; cursor: pointer; }
-    .btn-logout:hover { border-color: #f87171; color: #f87171; }
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-    .main-hdr { padding: 20px 28px; border-bottom: 1px solid #2d3148; background: #1a1d27; flex-shrink: 0; }
-    .main-hdr h2 { font-size: 15px; font-weight: 600; color: #f1f5f9; }
-    .main-hdr p { font-size: 13px; color: #475569; margin-top: 3px; }
-    .msgs-area { flex: 1; overflow-y: auto; padding: 24px 28px; }
-    .msgs-area::-webkit-scrollbar { width: 3px; }
-    .msgs-area::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 2px; }
-    .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #2d3148; }
-    .empty-icon { font-size: 52px; margin-bottom: 16px; }
-    .empty p { font-size: 15px; }
-    .msgs-wrap { display: flex; flex-direction: column; gap: 14px; }
-    .msg { display: flex; flex-direction: column; max-width: 72%; }
-    .msg.user { align-self: flex-end; }
-    .msg.assistant { align-self: flex-start; }
-    .msg-who { font-size: 11px; color: #475569; margin-bottom: 4px; padding: 0 4px; }
-    .msg.user .msg-who { text-align: right; }
-    .msg-text { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
-    .msg.user .msg-text { background: #312e81; color: #e0e7ff; border-bottom-right-radius: 3px; }
-    .msg.assistant .msg-text { background: #1e2035; color: #cbd5e1; border: 1px solid #2d3148; border-bottom-left-radius: 3px; }
-
-    /* ── MOBILE DRAWER ── */
-    .drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; }
-    .drawer { position: fixed; left: 0; top: 0; bottom: 0; width: 300px; background: #1a1d27; border-right: 1px solid #2d3148; z-index: 201; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.25s ease; }
-    .drawer.open { transform: translateX(0); }
-    .drawer-header { padding: 16px; border-bottom: 1px solid #2d3148; display: flex; align-items: center; justify-content: space-between; }
-    .drawer-header .brand { margin-bottom: 0; }
-    .btn-close { background: transparent; border: none; color: #64748b; font-size: 20px; cursor: pointer; padding: 4px; }
-
-    /* ── MOBILE VIEW ── */
-    .mobile-conv-list { flex: 1; overflow-y: auto; padding: 8px; }
-    .mobile-conv-list::-webkit-scrollbar { width: 3px; }
-    .mobile-main { display: none; flex-direction: column; min-height: 0; }
-    .mobile-main.visible { display: flex; flex: 1; }
-    .mobile-msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-    .btn-back { display: none; align-items: center; gap: 6px; padding: 10px 16px; background: transparent; border: none; border-bottom: 1px solid #2d3148; color: #818cf8; font-size: 14px; font-family: 'Inter', sans-serif; cursor: pointer; width: 100%; text-align: left; }
-
-    /* ── RESPONSIVE ── */
-    @media (max-width: 768px) {
-      .layout { display: none !important; }
-      .topbar { display: flex; }
-      .stats-bar { display: flex; }
-      .mobile-main { display: none; }
-      .mobile-main.visible { display: flex; flex-direction: column; }
-      .btn-back { display: flex; }
-      #mobileConvSection { display: block; }
-    }
-
-    @media (min-width: 769px) {
-      .topbar { display: none !important; }
-      .stats-bar { display: none !important; }
-      .drawer-overlay { display: none !important; }
-      .drawer { display: none !important; }
-      #mobileConvSection { display: none !important; }
-      .mobile-main { display: none !important; }
-      .btn-back { display: none !important; }
-      .layout { display: flex !important; height: 100vh; }
-    }
-  </style>
-</head>
-<body>
-
-<!-- ══ LOGIN ══ -->
-<div id="login">
-  <div class="card">
-    <div class="logo">&#129302;</div>
-    <h2>Replai Admin</h2>
-    <p class="sub">Connectez-vous pour acceder au dashboard</p>
-    <div class="pwd-row">
-      <input type="password" id="pwd" placeholder="Mot de passe" />
-      <span class="eye" id="eyeBtn">&#128065;</span>
-    </div>
-    <button class="btn-login" id="loginBtn">Se connecter</button>
-    <div class="err" id="errMsg">Mot de passe incorrect</div>
-  </div>
-</div>
-
-<!-- ══ DASHBOARD ══ -->
-<div id="dashboard">
-
-  <!-- TOP BAR mobile -->
-  <div class="topbar">
-    <div class="topbar-brand">
-      <div class="topbar-icon">&#129302;</div>
-      <span class="topbar-name" id="topbarName">Replai</span>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button class="btn-menu" id="refreshBtnMobile" title="Rafraichir">&#8635;</button>
-      <button class="btn-menu" id="menuBtn">&#9776;</button>
-    </div>
-  </div>
-
-  <!-- STATS BAR mobile -->
-  <div class="stats-bar" id="statsBarMobile">
-    <div class="stat-pill highlight">
-      <span class="sp-n" id="mLeads">0</span>
-      <span class="sp-l">Leads</span>
-    </div>
-    <div class="stat-pill">
-      <span class="sp-n" id="mTotal">0</span>
-      <span class="sp-l">Total</span>
-    </div>
-    <div class="stat-pill success">
-      <span class="sp-n" id="mRate">0%</span>
-      <span class="sp-l">Conversion</span>
-    </div>
-    <div class="stat-pill">
-      <span class="sp-n" id="mMonth">0</span>
-      <span class="sp-l">Ce mois</span>
-    </div>
-  </div>
-
-  <!-- MOBILE: liste conversations -->
-  <div id="mobileConvSection">
-    <div style="padding:10px 16px 4px;border-bottom:1px solid #2d3148;">
-      <input class="search-input" id="searchMobile" placeholder="&#128269; Rechercher..." style="width:100%" />
-    </div>
-    <div class="mobile-conv-list" id="mobileConvList" style="max-height:calc(100vh - 200px);overflow-y:auto;padding:8px"></div>
-  </div>
-
-  <!-- MOBILE: vue conversation -->
-  <div class="mobile-main" id="mobileConvView">
-    <button class="btn-back" id="backBtn">&#8592; Retour aux conversations</button>
-    <div style="padding:14px 16px;border-bottom:1px solid #2d3148;background:#1a1d27;">
-      <div style="font-size:14px;font-weight:600;color:#f1f5f9" id="mobileHdrTitle">Conversation</div>
-      <div style="font-size:12px;color:#475569;margin-top:2px" id="mobileHdrSub"></div>
-    </div>
-    <div class="mobile-msgs" id="mobileMsgs"></div>
-  </div>
-
-  <!-- DRAWER (liste convs sur mobile) -->
-  <div class="drawer-overlay" id="drawerOverlay"></div>
-  <div class="drawer" id="drawer">
-    <div class="drawer-header">
-      <div class="brand">
-        <div class="brand-icon">&#129302;</div>
-        <span class="brand-name" id="drawerName">Replai</span>
-      </div>
-      <button class="btn-close" id="closeDrawer">&#10005;</button>
-    </div>
-    <div style="padding:10px 12px;border-bottom:1px solid #2d3148">
-      <button class="btn-logout" id="logoutBtnMobile">Se deconnecter</button>
-    </div>
-  </div>
-
-  <!-- DESKTOP LAYOUT -->
-  <div class="layout">
-    <div class="sidebar">
-      <div class="sb-top">
-        <div class="brand">
-          <div class="brand-icon">&#129302;</div>
-          <span class="brand-name" id="businessName">Replai</span>
-        </div>
-        <!-- Stats 3 colonnes -->
-        <div class="stats-grid">
-          <div class="stat highlight">
-            <span class="stat-n" id="leadsN">0</span>
-            <span class="stat-l">Leads</span>
-          </div>
-          <div class="stat">
-            <span class="stat-n" id="totalN">0</span>
-            <span class="stat-l">Total</span>
-          </div>
-          <div class="stat success">
-            <span class="stat-n" id="rateN">0%</span>
-            <span class="stat-l">Conv.</span>
-          </div>
-        </div>
-        <div class="stats-grid" style="margin-top:6px">
-          <div class="stat" style="grid-column:1/2">
-            <span class="stat-n" id="monthN">0</span>
-            <span class="stat-l">Ce mois</span>
-          </div>
-          <div class="stat" style="grid-column:2/4">
-            <span class="stat-n" id="urgentN">0</span>
-            <span class="stat-l">A rappeler</span>
-          </div>
-        </div>
-      </div>
-      <div class="sb-mid">
-        <input class="search-input" id="searchInput" placeholder="&#128269; Rechercher..." />
-        <button class="btn-refresh" id="refreshBtn">&#8635; Rafraichir</button>
-      </div>
-      <div class="conv-list" id="convList"></div>
-      <div class="sb-bot">
-        <button class="btn-logout" id="logoutBtn">Se deconnecter</button>
-      </div>
-    </div>
-    <div class="main">
-      <div class="main-hdr">
-        <h2 id="hdrTitle">Conversations</h2>
-        <p id="hdrSub">Selectionnez une conversation</p>
-      </div>
-      <div class="msgs-area" id="msgsArea">
-        <div class="empty">
-          <div class="empty-icon">&#128172;</div>
-          <p>Selectionnez une conversation</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-var token = localStorage.getItem("wt") || "";
-var clientToken = new URLSearchParams(window.location.search).get("token") || "";
-var activeId = null;
-var allConvs = [];
-var isMobile = function() { return window.innerWidth <= 768; };
-// Les messages viennent des visiteurs : on les echappe avant tout innerHTML
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, function(ch) {
-    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[ch];
-  });
-}
-
-if (!clientToken) {
-  document.body.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100vh;color:#f87171;font-family:Inter,sans-serif'>Token manquant dans l URL</div>";
-}
-if (token && clientToken) doVerify();
-
-// ── Auth ──────────────────────────────────────────────────────────────────────
-document.getElementById("eyeBtn").onclick = function() {
-  var i = document.getElementById("pwd");
-  i.type = i.type === "password" ? "text" : "password";
-};
-document.getElementById("loginBtn").onclick = doLogin;
-document.getElementById("pwd").onkeydown = function(e) { if (e.key==="Enter") doLogin(); };
-
-function doVerify() {
-  fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:token,client_token:clientToken})})
-  .then(function(r){ if(r.ok) r.json().then(function(d){ showDash(d.business_name); }); else { token=""; localStorage.removeItem("wt"); } });
-}
-
-function doLogin() {
-  var pwd = document.getElementById("pwd").value;
-  var err = document.getElementById("errMsg");
-  err.style.display = "none";
-  fetch("/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd,client_token:clientToken})})
-  .then(function(r){
-    if(r.ok) r.json().then(function(d){ token=pwd; localStorage.setItem("wt",pwd); showDash(d.business_name); });
-    else err.style.display = "block";
-  }).catch(function(){ err.style.display="block"; err.innerText="Erreur reseau"; });
-}
-
-function showDash(name) {
-  document.getElementById("login").style.display = "none";
-  document.getElementById("dashboard").style.display = "block";
-  // Noms
-  if(name) {
-    document.getElementById("businessName").innerText = name;
-    document.getElementById("topbarName").innerText = name;
-    document.getElementById("drawerName").innerText = name;
-  }
-  loadConvs();
-}
-
-function doLogout() {
-  localStorage.removeItem("wt"); token = "";
-  document.getElementById("dashboard").style.display = "none";
-  document.getElementById("login").style.display = "flex";
-  document.getElementById("pwd").value = "";
-}
-
-document.getElementById("logoutBtn").onclick = doLogout;
-document.getElementById("logoutBtnMobile").onclick = doLogout;
-
-// ── Menu mobile ───────────────────────────────────────────────────────────────
-document.getElementById("menuBtn").onclick = function() {
-  document.getElementById("drawer").classList.add("open");
-  document.getElementById("drawerOverlay").style.display = "block";
-};
-document.getElementById("closeDrawer").onclick = closeDrawer;
-document.getElementById("drawerOverlay").onclick = closeDrawer;
-function closeDrawer() {
-  document.getElementById("drawer").classList.remove("open");
-  document.getElementById("drawerOverlay").style.display = "none";
-}
-
-// ── Refresh ───────────────────────────────────────────────────────────────────
-document.getElementById("refreshBtn").onclick = loadConvs;
-document.getElementById("refreshBtnMobile").onclick = loadConvs;
-
-// ── Recherche ─────────────────────────────────────────────────────────────────
-document.getElementById("searchInput").oninput = function() { renderConvList(filterConvs(this.value)); };
-document.getElementById("searchMobile").oninput = function() { renderConvList(filterConvs(this.value)); };
-
-// ── Back mobile ───────────────────────────────────────────────────────────────
-document.getElementById("backBtn").onclick = function() {
-  document.getElementById("mobileConvView").classList.remove("visible");
-  document.getElementById("mobileConvSection").style.display = "block";
-  document.getElementById("statsBarMobile").style.display = "flex";
-};
-
-// ── Chargement conversations ──────────────────────────────────────────────────
-function loadConvs() {
-  fetch("/admin/conversations?client_token="+clientToken, {headers:{"X-Admin-Password":token}})
-  .then(function(r){ return r.json(); })
-  .then(function(data){ allConvs = data; renderConvList(data); });
-}
-
-function filterConvs(q) {
-  if(!q) return allConvs;
-  q = q.toLowerCase();
-  return allConvs.filter(function(c){ return c.id.toLowerCase().includes(q); });
-}
-
-// ── Stats ─────────────────────────────────────────────────────────────────────
-function computeStats(data) {
-  var total = data.length;
-  var leads = data.filter(function(c){ return c.needs_human; }).length;
-  var urgent = leads; // needs_human = a rappeler
-  var rate = total > 0 ? Math.round((leads / total) * 100) : 0;
-
-  // Ce mois : created_at commence par YYYY-MM courant
-  var now = new Date();
-  var ym = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
-  var month = data.filter(function(c){ return c.created_at && c.created_at.startsWith(ym); }).length;
-
-  return { total: total, leads: leads, urgent: urgent, rate: rate, month: month };
-}
-
-function updateStats(data) {
-  var s = computeStats(data);
-  // Desktop
-  document.getElementById("totalN").innerText = s.total;
-  document.getElementById("leadsN").innerText = s.leads;
-  document.getElementById("urgentN").innerText = s.urgent;
-  document.getElementById("rateN").innerText = s.rate + "%";
-  document.getElementById("monthN").innerText = s.month;
-  // Mobile
-  document.getElementById("mTotal").innerText = s.total;
-  document.getElementById("mLeads").innerText = s.leads;
-  document.getElementById("mRate").innerText = s.rate + "%";
-  document.getElementById("mMonth").innerText = s.month;
-}
-
-// ── Rendu liste ───────────────────────────────────────────────────────────────
-function renderConvList(data) {
-  updateStats(allConvs); // stats toujours sur toutes les convs
-
-  // Desktop
-  var list = document.getElementById("convList");
-  list.innerHTML = "";
-
-  // Mobile
-  var mlist = document.getElementById("mobileConvList");
-  mlist.innerHTML = "";
-
-  if(!data.length) {
-    var empty = "<p style='color:#475569;font-size:13px;text-align:center;padding:20px'>Aucune conversation</p>";
-    list.innerHTML = empty;
-    mlist.innerHTML = empty;
-    return;
-  }
-
-  data.forEach(function(conv) {
-    var contact = conv.contact_info ? "<div class='contact-info'>&#128222; "+esc(conv.contact_info)+"</div>" : "";
-    var inner = "<div class='ci-top'><span class='ci-id'>#"+esc(conv.id.slice(0,8))+"</span>"
-      +(conv.needs_human?"<span class='badge'>RAPPELER</span>":"")+"</div>"
-      +"<div class='ci-meta'>"+esc(conv.created_at)+" &middot; "+esc(conv.message_count)+" msg</div>"+contact;
-
-    // Desktop
-    var div = document.createElement("div");
-    div.className = "ci"+(conv.needs_human?" urgent":"")+(conv.id===activeId?" active":"");
-    div.innerHTML = inner;
-    div.onclick = (function(id, el){ return function(){ loadConv(id, el, false); }; })(conv.id, div);
-    list.appendChild(div);
-
-    // Mobile
-    var mdiv = document.createElement("div");
-    mdiv.className = "ci"+(conv.needs_human?" urgent":"");
-    mdiv.innerHTML = inner;
-    mdiv.onclick = (function(id){ return function(){ loadConv(id, null, true); }; })(conv.id);
-    mlist.appendChild(mdiv);
-  });
-}
-
-// ── Chargement conversation ───────────────────────────────────────────────────
-function loadConv(id, el, mobile) {
-  activeId = id;
-  if(!mobile) {
-    document.querySelectorAll("#convList .ci").forEach(function(x){ x.classList.remove("active"); });
-    if(el) el.classList.add("active");
-    document.getElementById("hdrTitle").innerText = "Conversation #"+id.slice(0,8);
-    document.getElementById("hdrSub").innerText = "Historique complet";
-  } else {
-    document.getElementById("mobileConvSection").style.display = "none";
-    document.getElementById("statsBarMobile").style.display = "none";
-    var view = document.getElementById("mobileConvView");
-    view.classList.add("visible");
-    document.getElementById("mobileHdrTitle").innerText = "Conversation #"+id.slice(0,8);
-    document.getElementById("mobileHdrSub").innerText = "Historique complet";
-  }
-
-  fetch("/admin/conversations/"+id+"?client_token="+clientToken, {headers:{"X-Admin-Password":token}})
-  .then(function(r){ return r.json(); })
-  .then(function(data){
-    if(!mobile) {
-      var area = document.getElementById("msgsArea");
-      area.innerHTML = "<div class='msgs-wrap' id='msgsWrap'></div>";
-      var wrap = document.getElementById("msgsWrap");
-      data.forEach(function(msg){ wrap.appendChild(buildMsg(msg)); });
-      area.scrollTop = area.scrollHeight;
-    } else {
-      var mmsgs = document.getElementById("mobileMsgs");
-      mmsgs.innerHTML = "";
-      data.forEach(function(msg){ mmsgs.appendChild(buildMsg(msg)); });
-      mmsgs.scrollTop = mmsgs.scrollHeight;
-    }
-  });
-}
-
-function buildMsg(msg) {
-  var div = document.createElement("div");
-  div.className = "msg " + msg.role;
-  var who = msg.role === "user" ? "Visiteur" : "Assistant IA";
-  div.innerHTML = "<div class='msg-who'>"+who+"</div><div class='msg-text'>"+esc(msg.content).split("\\n").join("<br>")+"</div>";
-  return div;
-}
-</script>
-</body>
-</html>"""
+# Le dashboard client est dans templates/admin.html (une page par client,
+# habillee automatiquement aux couleurs de sa boutique).
+ADMIN_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "admin.html")
 
 
+# ── Dashboard client ──────────────────────────────────────────────────────────
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    return HTMLResponse(content=ADMIN_HTML)
+    with open(ADMIN_HTML_PATH, encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+def to_local(dt):
+    """Les dates sont stockees en UTC : on les affiche a l'heure de Paris."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(LOCAL_TZ)
+
+
+def fmt_local(dt) -> str:
+    d = to_local(dt)
+    return d.strftime("%Y-%m-%dT%H:%M") if d else ""
+
+
+def check_admin(client_token: str, password: str, db: Session) -> Client:
+    c = db.query(Client).filter(Client.token == client_token).first()
+    if not c or not password or c.admin_password != password:
+        raise HTTPException(status_code=401)
+    return c
+
+
+def client_brand(c: Client, db: Session) -> dict:
+    """Ce qui habille le dashboard : nom, couleur, boutique."""
+    cfg = get_widget_config(c.token, db)
+    shop = get_shop_url(c.token, db) or ""
+    domain = re.sub(r"^https?://(www\.)?", "", shop).split("/")[0] if shop else ""
+    color = cfg.get("color") if HEX_RE.match(cfg.get("color") or "") else ""
+    name = c.business_name or ""
+    if not name or name.lower() == "mon business":
+        name = re.sub(r"^assistant(e)?\s+(de\s+|d')?", "", cfg.get("assistant_name") or "", flags=re.I) or "Replai"
+    return {"name": name, "color": color, "shop_url": shop, "domain": domain,
+            "assistant_name": cfg.get("assistant_name") or ""}
+
+
+def conversation_rows(client_token: str, db: Session) -> dict:
+    """id -> (state, handled), en une seule requete."""
+    try:
+        rows = db.execute(text(
+            "SELECT id, state, handled FROM conversations WHERE client_token = :t"
+        ), {"t": client_token}).fetchall()
+        return {r[0]: (r[1] or STATE_NORMAL, bool(r[2])) for r in rows}
+    except Exception as e:
+        print("CONV ROWS ERROR:", e)
+        db.rollback()
+        return {}
+
+
+def messages_by_conversation(client_token: str, db: Session, since=None) -> dict:
+    q = db.query(MessageModel).join(
+        Conversation, MessageModel.conversation_id == Conversation.id
+    ).filter(Conversation.client_token == client_token)
+    if since is not None:
+        q = q.filter(Conversation.created_at >= since)
+    out = {}
+    for m in q.order_by(MessageModel.created_at).all():
+        out.setdefault(m.conversation_id, []).append(m)
+    return out
+
+
+def lead_contact(msgs) -> Optional[str]:
+    contact = None
+    for m in msgs:
+        if m.role == "user" and contains_contact_info(m.content):
+            contact = m.content
+    return contact
+
+
+def first_question(msgs) -> str:
+    for m in msgs:
+        if m.role == "user" and not contains_contact_info(m.content) and len(m.content.strip()) > 2:
+            return m.content.strip()
+    return ""
+
+
+@app.get("/admin/brand")
+def admin_brand(client_token: str, db: Session = Depends(get_db)):
+    """Public (comme /widget-config) : sert a habiller la page de connexion."""
+    c = db.query(Client).filter(Client.token == client_token).first()
+    if not c:
+        raise HTTPException(status_code=404)
+    b = client_brand(c, db)
+    return {"name": b["name"], "color": b["color"], "domain": b["domain"]}
 
 
 @app.post("/admin/login")
 def admin_login(data: dict, db: Session = Depends(get_db)):
-    c = db.query(Client).filter(Client.token == data.get("client_token","")).first()
-    if not c or c.admin_password != data.get("password",""):
-        raise HTTPException(status_code=401)
-    return {"ok": True, "business_name": c.business_name}
+    c = check_admin(data.get("client_token", ""), data.get("password", ""), db)
+    b = client_brand(c, db)
+    return {"ok": True, "business_name": b["name"], **b}
 
 
 @app.get("/admin/conversations")
 def admin_conversations(client_token: str, request: Request, db: Session = Depends(get_db)):
-    password = request.headers.get("X-Admin-Password","")
-    c = db.query(Client).filter(Client.token == client_token).first()
-    if not c or c.admin_password != password:
-        raise HTTPException(status_code=401)
+    check_admin(client_token, request.headers.get("X-Admin-Password", ""), db)
     convs = db.query(Conversation).filter(
         Conversation.client_token == client_token
     ).order_by(Conversation.created_at.desc()).all()
+    states = conversation_rows(client_token, db)
+    by_conv = messages_by_conversation(client_token, db)
     result = []
     for conv in convs:
-        msgs = db.query(MessageModel).filter(MessageModel.conversation_id == conv.id).order_by(MessageModel.created_at).all()
-        state = get_state(conv.id, db)
+        msgs = by_conv.get(conv.id, [])
+        state, handled = states.get(conv.id, (STATE_NORMAL, False))
         needs_human = state == STATE_DONE
-        contact_info = None
-        for m in msgs:
-            if m.role == "user":
-                digits = re.sub(r'\D', '', m.content)
-                if len(digits) >= 6:
-                    contact_info = m.content
         result.append({
             "id": conv.id,
-            "created_at": str(conv.created_at)[:16] if conv.created_at else "--",
+            "created_at": fmt_local(conv.created_at),
             "message_count": len(msgs),
+            "preview": first_question(msgs)[:140],
             "needs_human": needs_human,
-            "contact_info": contact_info if needs_human else None,
-            "state": state
+            "handled": handled,
+            "contact_info": lead_contact(msgs) if needs_human else None,
+            "state": state,
         })
     return result
 
 
 @app.get("/admin/conversations/{conv_id}")
 def admin_conversation_detail(conv_id: str, client_token: str, request: Request, db: Session = Depends(get_db)):
-    password = request.headers.get("X-Admin-Password","")
-    c = db.query(Client).filter(Client.token == client_token).first()
-    if not c or c.admin_password != password:
-        raise HTTPException(status_code=401)
+    check_admin(client_token, request.headers.get("X-Admin-Password", ""), db)
     conv = db.query(Conversation).filter(
         Conversation.id == conv_id, Conversation.client_token == client_token
     ).first()
@@ -1407,7 +988,162 @@ def admin_conversation_detail(conv_id: str, client_token: str, request: Request,
     msgs = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
-    return [{"role": m.role, "content": m.content} for m in msgs]
+    return [{"role": m.role, "content": m.content, "at": fmt_local(m.created_at)} for m in msgs]
+
+
+class HandledRequest(BaseModel):
+    handled: bool = True
+
+
+@app.post("/admin/conversations/{conv_id}/handled")
+def admin_mark_handled(conv_id: str, client_token: str, req: HandledRequest, request: Request,
+                       db: Session = Depends(get_db)):
+    check_admin(client_token, request.headers.get("X-Admin-Password", ""), db)
+    res = db.execute(text(
+        "UPDATE conversations SET handled = :h WHERE id = :id AND client_token = :t"
+    ), {"h": bool(req.handled), "id": conv_id, "t": client_token})
+    db.commit()
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404)
+    return {"ok": True, "handled": bool(req.handled)}
+
+
+# Themes des questions : calcules par l'IA, gardes 1 h en memoire par client
+TOPICS_CACHE = {}   # (token, days) -> (timestamp, cle, themes)
+TOPICS_TTL = 3600
+
+
+def question_topics(token: str, days: int, questions: list) -> list:
+    if len(questions) < 3:
+        return []
+    key = (len(questions), questions[0][:40])
+    cached = TOPICS_CACHE.get((token, days))
+    if cached and cached[1] == key and time.time() - cached[0] < TOPICS_TTL:
+        return cached[2]
+    sample = questions[:150]
+    try:
+        response = client.with_options(timeout=20, max_retries=1).chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=500,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": (
+                    "Tu analyses les premieres questions posees par les visiteurs d'une boutique en ligne. "
+                    "Regroupe-les en 5 themes au maximum, du plus frequent au moins frequent. "
+                    "Pour chaque theme : un titre court en francais (3 a 6 mots, ex. 'Delais de livraison'), "
+                    "le nombre de questions concernees, et un exemple reel tire de la liste (reformule en 12 mots max). "
+                    "Ignore les salutations seules. Reponds en JSON : "
+                    "{\"themes\": [{\"title\": str, \"count\": int, \"example\": str}]}"
+                )},
+                {"role": "user", "content": "\n".join("- " + q[:200] for q in sample)},
+            ],
+        )
+        data = json.loads(response.choices[0].message.content or "{}")
+        themes = []
+        for t in data.get("themes", [])[:5]:
+            title = str(t.get("title", "")).strip()[:60]
+            if not title:
+                continue
+            themes.append({
+                "title": title,
+                "count": max(0, min(int(t.get("count") or 0), len(sample))),
+                "example": str(t.get("example", "")).strip()[:120],
+            })
+        TOPICS_CACHE[(token, days)] = (time.time(), key, themes)
+        return themes
+    except Exception as e:
+        print("TOPICS ERROR:", e)
+        return cached[2] if cached else []
+
+
+@app.get("/admin/overview")
+def admin_overview(client_token: str, request: Request, days: int = 30, db: Session = Depends(get_db)):
+    """Chiffres de la periode : conversations, clients a rappeler, heures, themes."""
+    check_admin(client_token, request.headers.get("X-Admin-Password", ""), db)
+    days = max(1, min(int(days or 30), 365))
+    now_utc = datetime.utcnow()
+    since = now_utc - timedelta(days=days)
+    prev_since = since - timedelta(days=days)
+
+    states = conversation_rows(client_token, db)
+    convs = db.query(Conversation).filter(
+        Conversation.client_token == client_token, Conversation.created_at >= prev_since
+    ).all()
+    by_conv = messages_by_conversation(client_token, db, since=prev_since)
+
+    current = [c for c in convs if c.created_at and c.created_at >= since]
+    previous_count = sum(
+        1 for c in convs if c.created_at and c.created_at < since and by_conv.get(c.id)
+    )
+
+    hours = [0] * 24
+    local_today = to_local(now_utc).date()
+    day_keys = [(local_today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    per_day = {k: 0 for k in day_keys}
+    conversations = 0
+    visitor_messages = 0
+    after_hours = 0
+    leads_period = 0
+    questions = []
+
+    for conv in sorted(current, key=lambda c: c.created_at, reverse=True):
+        msgs = by_conv.get(conv.id, [])
+        user_msgs = [m for m in msgs if m.role == "user"]
+        if not user_msgs:
+            continue
+        conversations += 1
+        visitor_messages += len(user_msgs)
+        start = to_local(user_msgs[0].created_at or conv.created_at)
+        hours[start.hour] += 1
+        if start.hour >= 20 or start.hour < 8 or start.weekday() >= 5:
+            after_hours += 1
+        k = start.date().isoformat()
+        if k in per_day:
+            per_day[k] += 1
+        if states.get(conv.id, (STATE_NORMAL, False))[0] == STATE_DONE:
+            leads_period += 1
+        q = first_question(msgs)
+        if q:
+            questions.append(q)
+
+    # Clients a rappeler : toutes periodes confondues, les non traites d'abord
+    lead_ids = [cid for cid, (st, _) in states.items() if st == STATE_DONE]
+    leads = []
+    if lead_ids:
+        lead_convs = db.query(Conversation).filter(Conversation.id.in_(lead_ids)).all()
+        lead_msgs = {}
+        for m in db.query(MessageModel).filter(
+            MessageModel.conversation_id.in_(lead_ids)
+        ).order_by(MessageModel.created_at).all():
+            lead_msgs.setdefault(m.conversation_id, []).append(m)
+        for conv in lead_convs:
+            msgs = lead_msgs.get(conv.id, [])
+            leads.append({
+                "id": conv.id,
+                "created_at": fmt_local(conv.created_at),
+                "contact": lead_contact(msgs) or "",
+                "question": first_question(msgs)[:160],
+                "handled": states[conv.id][1],
+            })
+        leads.sort(key=lambda l: l["created_at"], reverse=True)   # plus recents d'abord
+        leads.sort(key=lambda l: l["handled"])                    # puis non traites en tete
+    open_leads = sum(1 for l in leads if not l["handled"])
+
+    return {
+        "days": days,
+        "conversations": conversations,
+        "previous_conversations": previous_count,
+        "visitor_messages": visitor_messages,
+        "after_hours": after_hours,
+        "after_hours_pct": round(100 * after_hours / conversations) if conversations else 0,
+        "leads_period": leads_period,
+        "open_leads": open_leads,
+        "hours": hours,
+        "per_day": [{"date": k, "count": per_day[k]} for k in day_keys],
+        "leads": leads[:50],
+        "topics": question_topics(client_token, days, questions),
+        "topics_sample": len(questions),
+    }
 
 
 @app.post("/contact-human")
