@@ -851,10 +851,10 @@
     api("/admin/conversations").then(function (data) { convs = data; renderConvList(); }).catch(function () {});
   }
   $("search").oninput = renderConvList;
-  document.querySelectorAll(".chip").forEach(function (c) {
+  document.querySelectorAll(".chip[data-filter]").forEach(function (c) {
     c.onclick = function () {
       filter = c.getAttribute("data-filter");
-      document.querySelectorAll(".chip").forEach(function (x) { x.classList.toggle("active", x === c); });
+      document.querySelectorAll(".chip[data-filter]").forEach(function (x) { x.classList.toggle("active", x === c); });
       renderConvList();
     };
   });

@@ -1602,6 +1602,8 @@ def product_teaser(shop: str, p: dict, lang: str) -> str:
                     "qui propose une aide UTILE ET SPECIFIQUE a CE produit (ex : la taille et la coupe pour un vetement, "
                     "les dimensions ou la matiere pour un tableau ou un objet, l'utilisation pour un soin...). "
                     "Appuie-toi uniquement sur les infos fournies, n'invente rien, aucun prix. "
+                    "Ne dis jamais qu'un vetement taille normalement, grand ou petit si ce n'est pas ecrit tel quel : "
+                    "'boxy' ou 'oversize' decrivent une coupe ample, pas une correspondance de taille. "
                     "Pas d'emoji, pas de guillemets autour de la phrase. Ecris en %s." % TEASER_LANGS.get(lang, "anglais")
                 )},
                 {"role": "user", "content": info},

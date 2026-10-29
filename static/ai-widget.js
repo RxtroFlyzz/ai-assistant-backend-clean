@@ -214,7 +214,29 @@
     "}",
     "#rpl-teaser-x { position:absolute; top:6px; right:8px; background:none; border:none; cursor:pointer;",
     "  color:var(--rpl-muted); font-size:14px; line-height:1; padding:2px; font-family:sans-serif; }",
-    "@keyframes rplIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }"
+    "@keyframes rplIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }",
+    /* Telephone : panneau en bas de l'ecran, texte en 16 px (sinon iPhone zoome) */
+    "#rpl-shade { position:fixed; inset:0; background:rgba(15,23,42,0.35); z-index:999998; display:none; }",
+    "@media (max-width: 640px) {",
+    "  #rpl-box { left:0; right:0; bottom:0; width:100%; max-width:100%; height:82vh; max-height:none;",
+    "    border-radius:20px 20px 0 0; border-bottom:none; animation:rplUp 0.25s ease-out; }",
+    "  #rpl-box.rpl-kb { border-radius:14px 14px 0 0; }",
+    "  #rpl-btn.rpl-open { display:none; }",
+    "  #rpl-shade.rpl-open { display:block; }",
+    "  #rpl-input { font-size:16px; padding:10px 14px; }",
+    "  #rpl-send { width:42px; height:42px; }",
+    "  #rpl-input-row { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }",
+    "  #rpl-msgs { overscroll-behavior:contain; padding:14px; }",
+    "  .rpl-bubble { font-size:15px; }",
+    "  .rpl-msg { max-width:90%; }",
+    "  #rpl-human-btn { margin:0 12px 8px; padding:9px; }",
+    "  #rpl-header { padding:12px 16px; }",
+    "  #rpl-close { font-size:22px; padding:4px 6px; }",
+    "  .rpl-card select { font-size:16px; }",
+    "  #rpl-btn { bottom:16px; right:16px; }",
+    "  #rpl-teaser { right:16px; bottom:84px; }",
+    "}",
+    "@keyframes rplUp { from { transform:translateY(40px); opacity:0; } to { transform:none; opacity:1; } }"
   ].join("\n");
   document.head.appendChild(style);
 
@@ -251,6 +273,9 @@
   teaser.setAttribute("role", "button");
   teaser.innerHTML = "<span id='rpl-teaser-text'></span><button id='rpl-teaser-x' aria-label='Fermer'>&#10005;</button>";
 
+  var shade = document.createElement("div");
+  shade.id = "rpl-shade";
+  document.body.appendChild(shade);
   document.body.appendChild(button);
   document.body.appendChild(box);
   document.body.appendChild(teaser);
@@ -601,15 +626,43 @@
   function showTyping() { typing.style.display = "flex"; msgs.scrollTop = msgs.scrollHeight; }
   function hideTyping() { typing.style.display = "none"; }
 
+  // ── Telephone : le panneau suit le clavier pour que la saisie reste visible ─
+  function isPhone() { return window.matchMedia && window.matchMedia("(max-width: 640px)").matches; }
+  function fitPhone() {
+    if (!isPhone() || !state.o) {
+      box.style.height = ""; box.style.bottom = ""; box.classList.remove("rpl-kb");
+      return;
+    }
+    var vv = window.visualViewport;
+    var visible = vv ? vv.height : window.innerHeight;
+    var hidden = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+    var keyboard = window.innerHeight - visible > 150;
+    box.classList.toggle("rpl-kb", keyboard);
+    box.style.bottom = hidden + "px";
+    box.style.height = Math.round(keyboard ? visible - 6 : visible * 0.82) + "px";
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", fitPhone);
+    window.visualViewport.addEventListener("scroll", fitPhone);
+  }
+  window.addEventListener("resize", fitPhone);
+
   function setOpen(open) {
     state.o = open; persist();
     box.style.display = open ? "flex" : "none";
+    button.classList.toggle("rpl-open", open);
+    shade.classList.toggle("rpl-open", open);
+    fitPhone();
     if (open) {
       hideTeaser(true);
       if (!state.m.length) addMsg("bot", welcomeText(), true, true);
-      input.focus();
+      msgs.scrollTop = msgs.scrollHeight;
+      // Sur telephone, on n'ouvre pas le clavier d'office : il cacherait la conversation
+      if (!isPhone()) input.focus();
     }
   }
+  shade.onclick = function() { setOpen(false); };
 
   // ── Bulle d'accroche ──────────────────────────────────────────────────────
   // Sur chaque nouvelle page produit (3 fois maximum par visite), une fois
