@@ -1552,6 +1552,83 @@ def pixel_code(token: str, superadmin_password: str):
     return PlainTextResponse(SHOPIFY_PIXEL_TEMPLATE % {"base": PUBLIC_BASE_URL, "token": token})
 
 
+# ── Bulle d'accroche adaptee au produit regarde ──────────────────────────────
+# Une phrase courte ecrite par l'IA a partir de la fiche produit (taille pour un
+# vetement, dimensions pour un tableau...). Une seule generation par produit et
+# par langue, gardee en memoire.
+TEASER_CACHE = {}   # (shop, product_id, lang) -> texte
+TEASER_LANGS = {"fr": "francais", "en": "anglais", "es": "espagnol", "it": "italien", "de": "allemand",
+                "nl": "neerlandais", "pt": "portugais"}
+
+
+def find_product(catalog: dict, page_url: str) -> Optional[dict]:
+    key = _url_key(page_url or "")
+    if not key:
+        return None
+    for p in catalog.get("products", []):
+        if p.get("url") and _url_key(p["url"]) == key:
+            return p
+    return None
+
+
+def fallback_teaser(p: dict, lang: str) -> str:
+    sized = any(SIZE_OPTION_RE.search(o["name"]) for o in p.get("options", []))
+    p = dict(p, title=p["title"].strip('"\u00ab\u00bb\u201c\u201d ') or p["title"])
+    if lang == "fr":
+        return ("Une question sur la taille de « %s » ? Je vous conseille tout de suite." if sized
+                else "Une question sur « %s » ? Je vous réponds tout de suite.") % p["title"][:40]
+    return ("Not sure about the size of “%s”? I can help right away." if sized
+            else "Any question about “%s”? I can help right away.") % p["title"][:40]
+
+
+def product_teaser(shop: str, p: dict, lang: str) -> str:
+    key = (shop, p["id"], lang)
+    if key in TEASER_CACHE:
+        return TEASER_CACHE[key]
+    info = "Produit : %s\nPrix : %s %s\nOptions : %s\nDisponible : %s\nInfos : %s" % (
+        p["title"], p["price"], p["currency"],
+        "; ".join("%s (%s)" % (o["name"], ", ".join(o["values"][:8])) for o in p["options"]) or "aucune",
+        "oui" if p["available"] else "non",
+        (p["fit"] + " " + p["desc"])[:400])
+    text = ""
+    try:
+        r = client.with_options(timeout=8, max_retries=0).chat.completions.create(
+            model="gpt-4.1-mini",
+            max_tokens=60,
+            messages=[
+                {"role": "system", "content": (
+                    "Tu ecris la petite bulle qui s'affiche a cote du chat d'une boutique en ligne quand un visiteur "
+                    "regarde un produit. Une seule phrase, 95 caracteres maximum, ton chaleureux et naturel, "
+                    "qui propose une aide UTILE ET SPECIFIQUE a CE produit (ex : la taille et la coupe pour un vetement, "
+                    "les dimensions ou la matiere pour un tableau ou un objet, l'utilisation pour un soin...). "
+                    "Appuie-toi uniquement sur les infos fournies, n'invente rien, aucun prix. "
+                    "Pas d'emoji, pas de guillemets autour de la phrase. Ecris en %s." % TEASER_LANGS.get(lang, "anglais")
+                )},
+                {"role": "user", "content": info},
+            ],
+        )
+        text = (r.choices[0].message.content or "").strip().strip('"\u00ab\u00bb\u201c\u201d ').strip()
+    except Exception as e:
+        print("TEASER ERROR:", e)
+    if not text or len(text) > 140:
+        return fallback_teaser(p, lang)      # pas mis en cache : on reessaiera
+    TEASER_CACHE[key] = text
+    return text
+
+
+@app.get("/teaser")
+def teaser(token: str = "", url: str = "", lang: str = "fr", db: Session = Depends(get_db)):
+    """Route publique appelee par le widget sur une page produit."""
+    shop = get_shop_url(token, db) if token else ""
+    if not shop:
+        return {}
+    p = find_product(get_catalog(shop), url)
+    if not p:
+        return {}
+    lang = (lang or "fr")[:2].lower()
+    return {"text": product_teaser(shop, p, lang if lang in TEASER_LANGS else "en"), "title": p["title"]}
+
+
 WIDGET_SNIPPET = '<script src="%(base)s/static/ai-widget.js?token=%(token)s"></script>'
 
 

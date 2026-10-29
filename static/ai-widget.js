@@ -24,9 +24,10 @@
       human: "Parler à un humain", placeholder: "Écrivez votre message…", you: "Vous",
       error: "Une erreur est survenue. Réessayez.", sending: "Envoi en cours…", sent: "Demande envoyée ✓",
       welcome: "Bonjour ! Comment puis-je vous aider ?",
-      welcomeProduct: "Bonjour ! Une question sur « {p} » ? Taille, livraison, retours : je vous réponds tout de suite.",
+      welcomeProduct: "Bonjour ! Une question sur « {p} » ? Je vous réponds tout de suite.",
+      hello: "Bonjour ! ",
       teaser: "Une question ? Je vous réponds tout de suite.",
-      teaserProduct: "Une question sur ce produit ? Taille, livraison… je vous réponds tout de suite.",
+      teaserProduct: "Une question sur ce produit ? Je vous réponds tout de suite.",
       view: "Voir : ", shipping: "Livraison", returns: "Retours", collection: "Voir la collection",
       add: "Ajouter au panier", adding: "Ajout…", added: "Ajouté ✓", cart: "Voir le panier",
       soldOut: "Épuisé", seeProduct: "Voir", out: "épuisé", addFail: "Impossible d'ajouter, ouvrez la fiche"
@@ -36,9 +37,10 @@
       human: "Talk to a person", placeholder: "Type your message…", you: "You",
       error: "Something went wrong. Please try again.", sending: "Sending…", sent: "Request sent ✓",
       welcome: "Hi! How can I help you?",
-      welcomeProduct: "Hi! Any question about “{p}”? Sizing, shipping, returns: I can help right away.",
+      welcomeProduct: "Hi! Any question about “{p}”? I can help right away.",
+      hello: "Hi! ",
       teaser: "Any questions? I can help right away.",
-      teaserProduct: "A question about this product? Sizing, shipping… I can help right away.",
+      teaserProduct: "A question about this product? I can help right away.",
       view: "View: ", shipping: "Shipping", returns: "Returns", collection: "View collection",
       add: "Add to cart", adding: "Adding…", added: "Added ✓", cart: "View cart",
       soldOut: "Sold out", seeProduct: "View", out: "sold out", addFail: "Couldn't add it, open the product page"
@@ -271,6 +273,7 @@
     return customName;
   }
   function welcomeText() {
+    if (productHook && productHookLang === uiLang()) return T("hello") + productHook;
     var p = isProductPage() ? productTitle() : "";
     if (p) return T("welcomeProduct").replace("{p}", p);
     return customWelcome && uiLang() === "fr" ? customWelcome : T("welcome");
@@ -611,8 +614,19 @@
   // ── Bulle d'accroche ──────────────────────────────────────────────────────
   // Sur chaque nouvelle page produit (3 fois maximum par visite), une fois
   // ailleurs. Plus jamais pendant la visite si le visiteur la ferme ou ouvre le chat.
-  var TEASER_MAX = 3;
+  var TEASER_MAX = 5;
   var teaserTimer = null;
+  // Phrase d'accroche ecrite par l'IA pour le produit regarde (taille, dimensions...)
+  var productHook = "", productHookLang = "";
+  function loadProductHook() {
+    if (!isProductPage() || !window.fetch) return;
+    var lang = uiLang();
+    fetch(BASE_URL + "/teaser?token=" + encodeURIComponent(CLIENT_TOKEN) + "&lang=" + lang +
+          "&url=" + encodeURIComponent(location.origin + location.pathname))
+      .then(function(r) { return r.ok ? r.json() : {}; })
+      .then(function(d) { if (d && d.text) { productHook = d.text; productHookLang = lang; } })
+      .catch(function() {});
+  }
   function teaserState() {
     try {
       var t = JSON.parse(sessionStorage.getItem(TEASER_KEY) || "null");
@@ -635,7 +649,8 @@
     teaserTimer = setTimeout(function() {
       if (state.o) return;
       var custom = teaserSetting && uiLang() === "fr" ? teaserSetting : "";
-      document.getElementById("rpl-teaser-text").textContent = custom || T(onProduct ? "teaserProduct" : "teaser");
+      var hook = productHookLang === uiLang() ? productHook : "";
+      document.getElementById("rpl-teaser-text").textContent = custom || hook || T(onProduct ? "teaserProduct" : "teaser");
       teaser.style.display = "block";
       var cur = teaserState();
       cur.n += 1; cur.pages.push(page); saveTeaser(cur);
@@ -733,6 +748,7 @@
     button.style.visibility = "visible";
     if (state.o) setOpen(true);
     else scheduleTeaser();
+    loadProductHook();
     tagShopifyCart();
     reportWooOrder();
   }
