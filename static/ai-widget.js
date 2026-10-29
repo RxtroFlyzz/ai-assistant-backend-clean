@@ -489,6 +489,48 @@
     var first = card.variants.filter(function(v) { return v.available; })[0];
     return first ? first.id : null;
   }
+  // Met a jour tout de suite l'icone et le tiroir du panier du theme,
+  // sans recharger la page (sinon le produit n'apparait qu'au rechargement).
+  function refreshThemeCart() {
+    fetch("/cart.js", { headers: { "Accept": "application/json" } })
+      .then(function(r) { return r.json(); })
+      .then(function(cart) {
+        var fire = function(name, detail) {
+          try { document.dispatchEvent(new CustomEvent(name, { bubbles: true, detail: detail })); } catch (e) {}
+        };
+        // Horizon (theme Shopify par defaut depuis 2025) et themes recents
+        fire("cart:update", { resource: cart, sourceId: "replai", data: { source: "replai", itemCount: cart.item_count } });
+        // Dawn et ses derives : bus d'evenements du theme
+        try { if (window.publish && window.PUB_SUB_EVENTS) window.publish(window.PUB_SUB_EVENTS.cartUpdate, { source: "replai", cartData: cart }); } catch (e) {}
+        // Autres themes courants
+        ["cart:refresh", "cart:updated", "cart:build", "theme:cart:refresh"].forEach(function(n) { fire(n, { cart: cart }); });
+        var horizon = document.querySelector("cart-icon, cart-drawer-component, cart-items-component");
+        if (!horizon) refreshCartSections();
+      })
+      .catch(function() {});
+  }
+  // Filet de securite : on recharge les sections en-tete et panier du theme
+  function refreshCartSections() {
+    var els = Array.prototype.slice.call(document.querySelectorAll("[id^='shopify-section-']"))
+      .filter(function(el) { return /header|cart/i.test(el.id) && !/announcement/i.test(el.id); })
+      .slice(0, 5);
+    if (!els.length) return;
+    // L'en-tete d'abord, le panier ensuite (il se rebranche sur la nouvelle icone)
+    els.sort(function(a, b) { return (/cart/i.test(a.id) ? 1 : 0) - (/cart/i.test(b.id) ? 1 : 0); });
+    var ids = els.map(function(el) { return el.id.replace("shopify-section-", ""); });
+    fetch(location.pathname + "?sections=" + encodeURIComponent(ids.join(",")))
+      .then(function(r) { return r.ok ? r.json() : {}; })
+      .then(function(data) {
+        els.forEach(function(el, i) {
+          var html = data[ids[i]];
+          if (!html) return;
+          var fresh = new DOMParser().parseFromString(html, "text/html").getElementById(el.id);
+          el.innerHTML = fresh ? fresh.innerHTML : html;
+        });
+      })
+      .catch(function() {});
+  }
+
   function addToCart(card, variantId, btn, links) {
     var url = card.url;
     track("add_to_cart", card, variantId);
@@ -506,7 +548,7 @@
           a.className = "rpl-cart-link"; a.href = "/cart"; a.textContent = T("cart");
           links.insertBefore(a, links.firstChild);
         }
-        try { document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true })); } catch (e) {}
+        refreshThemeCart();
       }).catch(function() {
         btn.disabled = false; btn.textContent = T("add");
         window.location.href = url + (url.indexOf("?") < 0 ? "?" : "&") + "variant=" + encodeURIComponent(variantId);
