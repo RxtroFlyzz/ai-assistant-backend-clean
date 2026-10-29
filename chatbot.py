@@ -706,14 +706,19 @@ def size_estimates(catalog: dict, height: int) -> list:
         for v in p["variants"]:
             if v["available"] and len(v["options"]) > idx:
                 avail.add(str(v["options"][idx]).upper())
-        line = "- %s : taille estimee %s (mannequin %d cm en %s)" % (p["title"], target, mh, ms)
+        if not avail:
+            continue    # produit entierement epuise : rien a conseiller
+        base = "(mannequin %d cm en %s)" % (mh, ms)
         if target in avail:
-            line += ", disponible"
+            line = "- %s : CONSEIL = %s, taille ideale et disponible %s" % (p["title"], target, base)
         else:
             near = sorted((abs(sizes.index(x) - sizes.index(target)), -sizes.index(x), x) for x in avail if x in sizes)
-            line += ", EPUISEE" + (" ; plus proche disponible : %s (%s)" % (
-                near[0][2], "plus petit, donc plus court et plus ajuste" if sizes.index(near[0][2]) < sizes.index(target)
-                else "plus grand, donc plus ample") if near else " ; aucune taille proche disponible")
+            if not near:
+                continue
+            alt = near[0][2]
+            line = "- %s : CONSEIL = %s, car la taille ideale %s est epuisee ; le %s sera %s %s" % (
+                p["title"], alt, target, alt,
+                "plus court et plus ajuste" if sizes.index(alt) < sizes.index(target) else "plus ample", base)
         lines.append(line)
     return lines[:30]
 
@@ -2057,6 +2062,11 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "(une seule fois, sans le mettre entre crochets) : le site l'affiche sous forme de fiche avec photo, "
             "prix et bouton d'ajout au panier. 3 produits maximum par reponse.\n"
             "- Si le visiteur hesite, propose 1 ou 2 produits precis et disponibles plutot qu'une liste.\n"
+            "- Respecte TOUJOURS le type de produit demande (manches courtes n'est pas manches longues, un t-shirt "
+            "n'est pas un sweat, un tableau n'est pas un vetement). Ne propose jamais un autre type de produit pour "
+            "contourner une rupture de stock : propose d'abord une autre taille ou une autre couleur du meme type. "
+            "Seulement si plus rien du type demande n'est disponible, dis-le clairement, puis suggere une alternative "
+            "en la presentant comme telle.\n"
             "- Ne mentionne jamais de prix, taille ou stock qui ne figure pas dans le catalogue.\n"
             "\nCONSEIL DE TAILLE (objectif : la bonne taille du premier coup, donc moins de retours) :\n"
             "- Si on te demande quelle taille prendre et que tu n'as pas les infos, demande en une seule question "
@@ -2083,10 +2093,11 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         estimates = size_estimates(catalog, height) if height else []
         if estimates:
             base_prompt += (
-                "\n\nESTIMATION DE TAILLE CALCULEE POUR CE VISITEUR (%d cm), a partir du mannequin de chaque produit. "
-                "Utilise-la telle quelle pour le produit concerne (tu peux l'ajuster d'une taille seulement si le "
-                "visiteur precise une corpulence ou une preference ajuste/ample). Si la taille estimee est epuisee, "
-                "dis-le clairement et propose la plus proche disponible en expliquant la difference :\n" % height
+                "\n\nCONSEIL DE TAILLE CALCULE POUR CE VISITEUR (%d cm), produit par produit, a partir du mannequin. "
+                "Donne exactement ce CONSEIL pour le produit concerne et reprends sa raison (tu peux l'ajuster d'une "
+                "taille seulement si le visiteur precise une corpulence ou une preference ajuste/ample). Quand la taille "
+                "ideale est epuisee, dis-le clairement. Les produits absents de cette liste n'ont aucune taille "
+                "disponible :\n" % height
                 + "\n".join(estimates)
             )
 
