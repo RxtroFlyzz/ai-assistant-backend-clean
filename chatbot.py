@@ -643,6 +643,99 @@ def _url_key(url: str) -> str:
 PRODUCT_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 
 
+# ── Estimation de taille calculee (plus fiable que le raisonnement de l'IA) ──
+SIZE_WORDS = {"XXS": "XXS", "XS": "XS", "S": "S", "SMALL": "S", "M": "M", "MEDIUM": "M", "L": "L", "LARGE": "L",
+              "XL": "XL", "X-LARGE": "XL", "XLARGE": "XL", "XXL": "XXL", "2XL": "XXL", "XXXL": "XXXL", "3XL": "XXXL"}
+SIZE_LADDER = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"]
+SIZE_TOKEN = r"(XXXL|3XL|XXL|2XL|X-?LARGE|XL|XXS|XS|SMALL|MEDIUM|LARGE|S|M|L)"
+MODEL_FIT_RE = re.compile(
+    r"(1[.,m]\s?\d{2}|1\d{2})\s?(?:cm)?[^.!?]{0,40}?(?:wears?|porte|taille|size)\s+(?:size\s+|taille\s+|un\s+|une\s+|du\s+|le\s+|la\s+)?"
+    + SIZE_TOKEN + r"\b", re.I)
+
+
+def _cm(raw: str) -> Optional[int]:
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 3:
+        v = int(digits)
+    elif len(digits) == 2:      # "1m85" -> "185" deja gere ; "85" seul apres "metre"
+        v = 100 + int(digits)
+    else:
+        return None
+    return v if 140 <= v <= 215 else None
+
+
+def visitor_height(messages: list) -> Optional[int]:
+    for msg in reversed(messages[-4:]):
+        t = (msg or "").lower()
+        m = (re.search(r"\b1\s?m\s?(\d{2})\b", t) or re.search(r"\b1[.,](\d{2})\s?m\b", t)
+             or re.search(r"m[eè]tres?\s*(\d{2})\b", t))
+        if m:
+            return _cm("1" + m.group(1))
+        m = re.search(r"\b(1\d{2})\s?cm\b", t)
+        if m:
+            return _cm(m.group(1))
+    return None
+
+
+def size_shift(diff_cm: int) -> int:
+    """Ecart de tailles par rapport au mannequin : 0 sous 8 cm, puis +1 vers 8-13 cm, +2 vers 14-21 cm..."""
+    d = abs(diff_cm)
+    step = 0 if d < 8 else (d + 2) // 8
+    return step if diff_cm > 0 else -step
+
+
+def size_estimates(catalog: dict, height: int) -> list:
+    lines = []
+    for p in catalog.get("products", []):
+        idx = next((i for i, o in enumerate(p["options"]) if SIZE_OPTION_RE.search(o["name"])), None)
+        if idx is None:
+            continue
+        models = []
+        for m in MODEL_FIT_RE.finditer(p.get("fit", "") + " " + p.get("desc", "")):
+            mh, ms = _cm(m.group(1)), SIZE_WORDS.get(m.group(2).upper().replace(" ", ""))
+            if mh and ms:
+                models.append((abs(mh - height), mh, ms))
+        if not models:
+            continue
+        _, mh, ms = min(models)
+        sizes = [v for v in SIZE_LADDER if v in [x.upper() for x in p["options"][idx]["values"]]]
+        if ms not in sizes:
+            continue
+        target = sizes[max(0, min(len(sizes) - 1, sizes.index(ms) + size_shift(height - mh)))]
+        avail = set()
+        for v in p["variants"]:
+            if v["available"] and len(v["options"]) > idx:
+                avail.add(str(v["options"][idx]).upper())
+        line = "- %s : taille estimee %s (mannequin %d cm en %s)" % (p["title"], target, mh, ms)
+        if target in avail:
+            line += ", disponible"
+        else:
+            near = sorted((abs(sizes.index(x) - sizes.index(target)), -sizes.index(x), x) for x in avail if x in sizes)
+            line += ", EPUISEE" + (" ; plus proche disponible : %s (%s)" % (
+                near[0][2], "plus petit, donc plus court et plus ajuste" if sizes.index(near[0][2]) < sizes.index(target)
+                else "plus grand, donc plus ample") if near else " ; aucune taille proche disponible")
+        lines.append(line)
+    return lines[:30]
+
+
+def clean_card_links(reply: str, cards: list) -> str:
+    """Retire du texte les liens des produits affiches en fiche (et la ponctuation qui restait)."""
+    if not cards:
+        return reply
+    keys = {_url_key(c["url"]) for c in cards}
+    def drop(m):
+        url = m.group(0).rstrip(".,;:!?»")
+        return m.group(0)[len(url):] if _url_key(url) in keys else m.group(0)
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", lambda m: m.group(1) if _url_key(m.group(2)) in keys else m.group(0), reply)
+    text = PRODUCT_URL_RE.sub(drop, text)
+    text = re.sub(r"[ \t]*:\s*([.!?])", r"\1", text)          # "ici : ." -> "ici."
+    text = re.sub(r"[ \t]*:[ \t]*(?=\n|$)", "", text)          # deux-points en fin de ligne
+    text = re.sub(r"(?im)^\s*(voici le lien[^\n]*|here is the link[^\n]*|lien\s*:?)\s*$", "", text)
+    text = re.sub(r"[ \t]+([.,])", r"\1", text)
+    text = re.sub(r"\.{2,}", ".", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def product_cards(reply: str, catalog: dict, limit: int = 3) -> list:
     """Produits cites dans la reponse (par leur lien), au format des fiches du widget."""
     by_url = {}
@@ -1982,8 +2075,20 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "epuise ; le M vous ira plus court').\n"
             "- Dans ta reponse, ne cite qu'une seule taille (celle que tu conseilles) : n'enumere pas toutes les "
             "tailles disponibles, la fiche produit affichee sous ton message permet deja de les voir.\n"
-            "- N'invente jamais de mesures (tour de poitrine, longueur...) absentes des informations de la boutique."
+            "- N'invente jamais de mesures (tour de poitrine, longueur...) absentes des informations de la boutique.\n"
+            "- Quand tu recommandes un produit, mets son lien seul a la fin du message, sans phrase du type "
+            "'voici le lien' : la fiche produit s'affiche automatiquement."
         )
+        height = visitor_height(visitor_msgs)
+        estimates = size_estimates(catalog, height) if height else []
+        if estimates:
+            base_prompt += (
+                "\n\nESTIMATION DE TAILLE CALCULEE POUR CE VISITEUR (%d cm), a partir du mannequin de chaque produit. "
+                "Utilise-la telle quelle pour le produit concerne (tu peux l'ajuster d'une taille seulement si le "
+                "visiteur precise une corpulence ou une preference ajuste/ample). Si la taille estimee est epuisee, "
+                "dis-le clairement et propose la plus proche disponible en expliquant la difference :\n" % height
+                + "\n".join(estimates)
+            )
 
     messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
@@ -1999,7 +2104,8 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         set_state(conv_id, STATE_PROPOSED, db)
 
     save_message(conv_id, "assistant", reply, db)
-    return bot_reply(reply, conv_id, False, product_cards(reply, catalog))
+    cards = product_cards(reply, catalog)
+    return bot_reply(clean_card_links(reply, cards), conv_id, False, cards)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
