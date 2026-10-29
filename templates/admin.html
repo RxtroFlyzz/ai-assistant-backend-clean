@@ -94,6 +94,14 @@
   .delta-up { color: var(--ok); font-weight: 600; }
   .delta-down { color: #b91c1c; font-weight: 600; }
 
+  .value { margin-top: 14px; padding: 18px 20px 20px; }
+  .value-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .value-head h2 { font-size: 15px; font-weight: 600; }
+  .value-head .hint { font-size: 12px; color: var(--ink-3); }
+  .value-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; margin-top: 14px; }
+  .value-grid > div { padding: 14px 16px; border-radius: 12px; background: #f8fafc; }
+  .value-grid > .value-main { background: var(--accent-soft); }
+  .value-n { font-size: 34px; font-weight: 700; letter-spacing: -.02em; margin-top: 8px; line-height: 1; color: var(--accent); }
   .grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; margin-top: 14px; }
   .stack { display: flex; flex-direction: column; gap: 14px; }
 
@@ -172,6 +180,7 @@
   @media (max-width: 960px) {
     .kpis { grid-template-columns: repeat(2, 1fr); }
     .grid2 { grid-template-columns: 1fr; }
+    .value-grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 720px) {
     .hdr { flex-wrap: wrap; padding: 10px 14px; gap: 10px; }
@@ -271,6 +280,30 @@
           <div class="kpi-l">Questions répondues</div>
           <div class="kpi-n" id="kMsgs">–</div>
           <div class="kpi-s">Messages de visiteurs traités par l'assistant</div>
+        </div>
+      </div>
+
+      <div class="card value">
+        <div class="value-head">
+          <h2>Ce que l'assistant vous a rapporté</h2>
+          <span class="hint">sur la période</span>
+        </div>
+        <div class="value-grid">
+          <div class="value-main">
+            <div class="kpi-l">Ventes après une conversation</div>
+            <div class="value-n" id="vRevenue">–</div>
+            <div class="kpi-s" id="vRevenueS">&nbsp;</div>
+          </div>
+          <div>
+            <div class="kpi-l">Ajouts au panier depuis le chat</div>
+            <div class="kpi-n" id="vCart">–</div>
+            <div class="kpi-s" id="vCartS">&nbsp;</div>
+          </div>
+          <div>
+            <div class="kpi-l">Clics vers vos produits</div>
+            <div class="kpi-n" id="vClicks">–</div>
+            <div class="kpi-s">Fiches produit ouvertes depuis le chat</div>
+          </div>
         </div>
       </div>
 
@@ -486,6 +519,7 @@
     $("kAfter").textContent = d.conversations ? d.after_hours_pct + " %" : "–";
     $("kAfterS").textContent = d.conversations ? plural(d.after_hours, "conversation", "conversations") + " le soir, la nuit ou le week-end" : "Le soir, la nuit et le week-end";
     $("kMsgs").textContent = d.visitor_messages;
+    renderValue(d.value || {}, d.value_previous || {}, d.orders_ever || 0);
 
     var tc = $("tabCount");
     tc.textContent = d.open_leads;
@@ -495,6 +529,30 @@
     renderHours(d.hours, d.conversations, d.after_hours_pct);
     renderTopics(d.topics, d.topics_sample);
     renderDays(d.per_day);
+  }
+
+  function eur(v, cur) {
+    try { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur || "EUR", maximumFractionDigits: v % 1 ? 2 : 0 }).format(v); }
+    catch (e) { return Math.round(v) + " €"; }
+  }
+  function renderValue(v, prev, ordersEver) {
+    if (v.orders) {
+      $("vRevenue").textContent = eur(v.revenue, v.currency);
+      var s = plural(v.orders, "commande", "commandes");
+      if (prev.revenue > 0) {
+        var pct = Math.round(100 * (v.revenue - prev.revenue) / prev.revenue);
+        s += " · <span class='" + (pct >= 0 ? "delta-up" : "delta-down") + "'>" + (pct >= 0 ? "+" : "") + pct + " %</span> vs période précédente";
+      }
+      $("vRevenueS").innerHTML = s;
+    } else {
+      $("vRevenue").textContent = "0 €";
+      $("vRevenueS").textContent = ordersEver
+        ? "Aucune commande attribuée sur cette période"
+        : "Les commandes passées après une conversation apparaîtront ici";
+    }
+    $("vCart").textContent = v.add_to_cart || 0;
+    $("vCartS").textContent = v.add_to_cart ? "Produits ajoutés en un clic, sans quitter la conversation" : "Le bouton « Ajouter au panier » des fiches produit";
+    $("vClicks").textContent = v.product_clicks || 0;
   }
 
   var showDone = false;

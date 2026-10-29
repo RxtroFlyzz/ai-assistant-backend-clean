@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from database import SessionLocal, engine
-from models import Base, Client, Conversation, Message as MessageModel
+from models import Base, Client, Conversation, Message as MessageModel, Event, ReportLog
 
 load_dotenv()
 
@@ -299,8 +299,11 @@ def save_message(conv_id: str, role: str, content: str, db: Session):
     db.commit()
 
 
-def bot_reply(text_content: str, conv_id: str, needs_human: bool = False):
-    return {"reply": text_content, "conversation_id": conv_id, "needs_human": needs_human}
+def bot_reply(text_content: str, conv_id: str, needs_human: bool = False, products: Optional[list] = None):
+    out = {"reply": text_content, "conversation_id": conv_id, "needs_human": needs_human}
+    if products:
+        out["products"] = products
+    return out
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -335,13 +338,17 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
         print("EMAIL ERROR:", str(e))
 
 
-# ── Catalogue Shopify automatique ─────────────────────────────────────────────
-# Chaque boutique Shopify expose publiquement /products.json (sans cle API).
-# On le lit, on le met en cache, et on l'injecte dans le prompt : les nouveaux
-# drops, prix et ruptures de stock sont connus du bot sans intervention.
+# ── Catalogue automatique (Shopify et WooCommerce) ───────────────────────────
+# Shopify expose publiquement /products.json, WooCommerce /wp-json/wc/store/v1/products
+# (sans cle API). On lit le catalogue, on le normalise dans un format commun
+# (fiches produit du chat + texte pour le prompt) et on le met en cache.
 CATALOG_TTL = 1800          # secondes (30 min)
 CATALOG_MAX_CHARS = 40000   # ~10k tokens : ~150 produits avec description courte
-CATALOG_CACHE = {}          # shop_url -> (timestamp, texte)
+CATALOG_CACHE = {}          # shop_url -> (timestamp, {"platform", "products", "text"})
+EMPTY_CATALOG = {"platform": "", "products": [], "text": ""}
+SIZE_OPTION_RE = re.compile(r"taille|size|pointure|talla|gr(o|ö)(ss|ß)e|misura", re.I)
+FIT_RE = re.compile(r"[^.!?\n]*(mannequin|mod[eè]le (mesure|porte|fait)|porte (un|une|du|la|le) |mesure \d|oversize|coupe |taille (grand|petit|normalement)|"
+                    r"runs (small|large)|true to size|fits|prenez|prendre (une|la) taille|cm de)[^.!?\n]*[.!?]?", re.I)
 
 
 def normalize_shop_url(url: str) -> str:
@@ -387,55 +394,170 @@ def _uniq(values):
     return out
 
 
-def _stock_text(p: dict, variants: list) -> str:
-    # Un seul variant "Default Title" = produit sans taille/couleur
-    if len(variants) == 1 and variants[0].get("title") == "Default Title":
-        return "en stock" if variants[0].get("available") else "RUPTURE DE STOCK"
-    if not any(v.get("available") for v in variants):
+def _fit_notes(desc: str) -> str:
+    """Phrases de la description utiles pour conseiller une taille."""
+    found = [m.group(0).strip() for m in FIT_RE.finditer(desc or "")]
+    return " ".join(_uniq(found))[:220]
+
+
+def _shopify_image(src: str) -> str:
+    if not src:
+        return ""
+    return src + ("&" if "?" in src else "?") + "width=240"
+
+
+def normalize_shopify(products: list, shop_url: str) -> list:
+    out = []
+    for p in products:
+        variants = p.get("variants") or []
+        if not variants:
+            continue
+        options = [{"name": o.get("name") or "Option", "values": o.get("values") or []}
+                   for o in (p.get("options") or [])]
+        simple = len(variants) == 1 and variants[0].get("title") == "Default Title"
+        vs = []
+        for v in variants:
+            try:
+                vprice = float(v["price"]) if v.get("price") not in (None, "") else None
+            except (TypeError, ValueError):
+                vprice = None
+            vs.append({
+                "id": str(v.get("id")),
+                "title": "" if simple else (v.get("title") or ""),
+                "options": [v.get("option%d" % i) for i in (1, 2, 3) if v.get("option%d" % i)],
+                "available": bool(v.get("available")),
+                "price": vprice,
+            })
+        prices = [v["price"] for v in vs if v["price"] is not None]
+        compares = []
+        for v in variants:
+            try:
+                if v.get("compare_at_price"):
+                    compares.append(float(v["compare_at_price"]))
+            except (TypeError, ValueError):
+                pass
+        price = min(prices) if prices else None
+        images = p.get("images") or []
+        desc = strip_html(p.get("body_html", ""))
+        out.append({
+            "id": str(p.get("id")),
+            "title": p.get("title") or "Produit",
+            "url": shop_url + "/products/" + p["handle"] if p.get("handle") else "",
+            "image": _shopify_image(images[0].get("src", "")) if images else "",
+            "price": price,
+            "compare_at": max(compares) if compares and price is not None and max(compares) > price else None,
+            "currency": "EUR",
+            "options": [] if simple else options,
+            "variants": vs,
+            "available": any(v["available"] for v in vs),
+            "desc": desc,
+            "fit": _fit_notes(desc),
+        })
+    return out
+
+
+def _woo_money(prices: dict, key: str):
+    raw = (prices or {}).get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw) / (10 ** int((prices or {}).get("currency_minor_unit", 2)))
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_woocommerce(products: list, shop_url: str) -> list:
+    out = []
+    for p in products:
+        prices = p.get("prices") or {}
+        price = _woo_money(prices, "price")
+        regular = _woo_money(prices, "regular_price")
+        attrs = [a for a in (p.get("attributes") or []) if a.get("has_variations")]
+        # Les variations donnent le "slug" de la valeur (ex. "m") : on retrouve le nom affiche ("M")
+        names = {}
+        for a in attrs:
+            for t in (a.get("terms") or []):
+                if t.get("slug") and t.get("name"):
+                    names[t["slug"].lower()] = t["name"]
+        options = [{"name": a.get("name") or "Option",
+                    "values": [t.get("name") for t in (a.get("terms") or []) if t.get("name")]} for a in attrs]
+        in_stock = bool(p.get("is_in_stock", True)) and bool(p.get("is_purchasable", True))
+        vs = []
+        for v in (p.get("variations") or []):
+            vals = [names.get(str(a.get("value")).lower(), a.get("value"))
+                    for a in (v.get("attributes") or []) if a.get("value")]
+            vs.append({"id": str(v.get("id")), "title": " / ".join(vals), "options": vals,
+                       "available": in_stock, "price": price})
+        if not vs:
+            vs = [{"id": str(p.get("id")), "title": "", "options": [], "available": in_stock, "price": price}]
+            options = []
+        images = p.get("images") or []
+        desc = strip_html(p.get("short_description") or p.get("description") or "")
+        out.append({
+            "id": str(p.get("id")),
+            "title": html_lib.unescape(p.get("name") or "Produit"),
+            "url": p.get("permalink") or "",
+            "image": (images[0].get("thumbnail") or images[0].get("src") or "") if images else "",
+            "price": price,
+            "compare_at": regular if regular and price is not None and regular > price else None,
+            "currency": prices.get("currency_code") or "EUR",
+            "options": options,
+            "variants": vs,
+            "available": in_stock,
+            "desc": desc,
+            "fit": _fit_notes(desc),
+        })
+    return out
+
+
+def _stock_text(p: dict) -> str:
+    variants = p["variants"]
+    if not p["options"]:
+        return "en stock" if p["available"] else "RUPTURE DE STOCK"
+    if not p["available"]:
         return "RUPTURE DE STOCK (toutes tailles)"
-    options = p.get("options") or []
-    if len(options) <= 1:
-        dispo = [v.get("title") for v in variants if v.get("available")]
-        epuise = [v.get("title") for v in variants if not v.get("available")]
-        txt = "disponible : " + ", ".join(dispo)
-        return txt + (" | epuise : " + ", ".join(epuise) if epuise else "")
+    if len(p["options"]) == 1:
+        dispo = _uniq(v["title"] for v in variants if v["available"])
+        epuise = _uniq(v["title"] for v in variants if not v["available"])
+        txt = "%s disponible : %s" % (p["options"][0]["name"], ", ".join(dispo[:40]))
+        return txt + (" | epuise : " + ", ".join(epuise[:40]) if epuise else "")
     # Plusieurs options (ex : taille x couleur) : on resume option par option,
     # sinon une bague en 15 tailles x 4 pierres ferait 60 variantes sur une ligne.
     parts = []
-    for i, opt in enumerate(options[:3], 1):
-        key = "option%d" % i
-        all_vals = _uniq(opt.get("values") or [v.get(key) for v in variants])
-        dispo = _uniq(v.get(key) for v in variants if v.get("available"))
+    for i, opt in enumerate(p["options"][:3]):
+        dispo = _uniq(v["options"][i] for v in variants if v["available"] and len(v["options"]) > i)
+        all_vals = _uniq(list(opt["values"]) + [v["options"][i] for v in variants if len(v["options"]) > i])
         epuise = [x for x in all_vals if x not in dispo]
-        part = "%s dispo : %s" % (opt.get("name") or "Option", ", ".join(dispo[:30]))
+        part = "%s dispo : %s" % (opt["name"], ", ".join(dispo[:30]))
         if epuise:
             part += " (epuise : %s)" % ", ".join(epuise[:30])
         parts.append(part)
     return " | ".join(parts)
 
 
-def format_catalog(products: list, shop_url: str) -> str:
+def catalog_to_text(products: list, shop_url: str) -> str:
     cores, descs = [], []
     for p in products:
-        variants = p.get("variants") or []
-        if not variants:
-            continue
-        prices = [float(v["price"]) for v in variants if v.get("price")]
-        compares = [float(v["compare_at_price"]) for v in variants if v.get("compare_at_price")]
-        price = min(prices) if prices else None
-        line = "- " + (p.get("title") or "Produit")
-        if price is not None:
-            line += " : %.2f EUR" % price
-            if compares and max(compares) > price:
-                line += " (au lieu de %.2f EUR)" % max(compares)
-        line += " | " + _stock_text(p, variants)
-        if p.get("handle"):
-            line += " | " + shop_url + "/products/" + p["handle"]
+        line = "- " + p["title"]
+        if p["price"] is not None:
+            line += " : %.2f %s" % (p["price"], p["currency"])
+            if p["compare_at"]:
+                line += " (au lieu de %.2f %s)" % (p["compare_at"], p["currency"])
+        line += " | " + _stock_text(p)
+        if p["url"]:
+            line += " | " + p["url"]
+        if p["fit"]:
+            line += " | INFO TAILLE : " + p["fit"]
         cores.append(line)
-        descs.append(strip_html(p.get("body_html", "")))
+        desc = p["desc"]
+        for m in FIT_RE.finditer(desc or ""):      # deja repris dans INFO TAILLE
+            desc = desc.replace(m.group(0), " ")
+        descs.append(re.sub(r"\s+", " ", desc).strip())
 
     # Priorite : que TOUS les produits tiennent dans le prompt. On raccourcit
     # les descriptions avant de supprimer des produits.
+    lines = cores
+    out = "\n".join(cores)
     for desc_len in (250, 120, 60, 0):
         lines = [c + (" | " + d[:desc_len] if d and desc_len else "") for c, d in zip(cores, descs)]
         out = "\n".join(lines)
@@ -443,38 +565,113 @@ def format_catalog(products: list, shop_url: str) -> str:
             return out
     kept = out[:CATALOG_MAX_CHARS].rsplit("\n", 1)[0]
     missing = len(lines) - kept.count("\n") - 1
-    return kept + "\n(... %d autres produits non listes ici : voir %s/collections/all)" % (missing, shop_url)
+    return kept + "\n(... %d autres produits non listes ici : voir le site %s)" % (missing, shop_url)
 
 
-def get_catalog_text(shop_url: str) -> str:
-    """Catalogue formate, avec cache. En cas d'erreur, renvoie la derniere
-    version connue (ou "" si aucune) : le chat ne doit jamais planter a cause de Shopify."""
+# Compatibilite : ancien nom utilise par les tests et outils
+def format_catalog(products: list, shop_url: str) -> str:
+    return catalog_to_text(normalize_shopify(products, shop_url), shop_url)
+
+
+def _fetch_shopify(shop_url: str) -> list:
+    r = httpx.get(shop_url + "/products.json", params={"limit": 250}, timeout=5.0, follow_redirects=True,
+                  headers={"User-Agent": "Replai-Catalog/1.0"})
+    r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, dict) or "products" not in data:
+        raise ValueError("pas un catalogue Shopify")
+    return normalize_shopify(data.get("products", []), shop_url)
+
+
+def _fetch_woocommerce(shop_url: str) -> list:
+    products = []
+    for page in range(1, 4):        # 300 produits maximum
+        r = httpx.get(shop_url + "/wp-json/wc/store/v1/products", params={"per_page": 100, "page": page},
+                      timeout=6.0, follow_redirects=True, headers={"User-Agent": "Replai-Catalog/1.0"})
+        r.raise_for_status()
+        batch = r.json()
+        if not isinstance(batch, list):
+            raise ValueError("pas un catalogue WooCommerce")
+        products += batch
+        if len(batch) < 100:
+            break
+    return normalize_woocommerce(products, shop_url)
+
+
+def get_catalog(shop_url: str) -> dict:
+    """Catalogue normalise, avec cache. En cas d'erreur, renvoie la derniere
+    version connue (ou un catalogue vide) : le chat ne doit jamais planter a cause de la boutique."""
     if not shop_url:
-        return ""
+        return EMPTY_CATALOG
     now = time.time()
     cached = CATALOG_CACHE.get(shop_url)
     if cached and now - cached[0] < CATALOG_TTL:
         return cached[1]
+    order = ["woocommerce", "shopify"] if cached and cached[1].get("platform") == "woocommerce" else ["shopify", "woocommerce"]
+    errors = []
+    for platform in order:
+        try:
+            products = _fetch_shopify(shop_url) if platform == "shopify" else _fetch_woocommerce(shop_url)
+            catalog = {"platform": platform, "products": products, "text": catalog_to_text(products, shop_url)}
+            CATALOG_CACHE[shop_url] = (now, catalog)
+            print("CATALOG OK:", shop_url, platform, len(products), "produits")
+            return catalog
+        except Exception as e:
+            errors.append("%s: %s" % (platform, e))
+    print("CATALOG ERROR:", shop_url, " | ".join(errors))
+    # On garde l'ancienne version (ou rien) et on ne reessaie que dans 5 min,
+    # pour ne pas ralentir chaque message si la boutique est injoignable.
+    previous = cached[1] if cached else EMPTY_CATALOG
+    CATALOG_CACHE[shop_url] = (now - CATALOG_TTL + 300, previous)
+    return previous
+
+
+def get_catalog_text(shop_url: str) -> str:
+    return get_catalog(shop_url)["text"]
+
+
+def _url_key(url: str) -> str:
+    """Cle de comparaison d'URL produit : hote sans www + chemin, sans parametres."""
     try:
-        r = httpx.get(
-            shop_url + "/products.json",
-            params={"limit": 250},
-            timeout=5.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Replai-Catalog/1.0"},
-        )
-        r.raise_for_status()
-        catalog = format_catalog(r.json().get("products", []), shop_url)
-        CATALOG_CACHE[shop_url] = (now, catalog)
-        print("CATALOG OK:", shop_url, len(catalog), "chars")
-        return catalog
-    except Exception as e:
-        print("CATALOG ERROR:", shop_url, e)
-        # On garde l'ancienne version (ou rien) et on ne reessaie que dans 5 min,
-        # pour ne pas ralentir chaque message si la boutique est injoignable.
-        previous = cached[1] if cached else ""
-        CATALOG_CACHE[shop_url] = (now - CATALOG_TTL + 300, previous)
-        return previous
+        u = httpx.URL(url)
+        return u.host.lower().removeprefix("www.") + u.path.rstrip("/").lower()
+    except Exception:
+        return ""
+
+
+PRODUCT_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
+
+def product_cards(reply: str, catalog: dict, limit: int = 3) -> list:
+    """Produits cites dans la reponse (par leur lien), au format des fiches du widget."""
+    by_url = {}
+    for p in catalog.get("products", []):
+        if p.get("url"):
+            by_url[_url_key(p["url"])] = p
+    cards, seen = [], set()
+    for raw in PRODUCT_URL_RE.findall(reply or ""):
+        p = by_url.get(_url_key(raw.rstrip(".,;:!?»")))
+        if not p or p["id"] in seen:
+            continue
+        seen.add(p["id"])
+        size_idx = next((i for i, o in enumerate(p["options"]) if SIZE_OPTION_RE.search(o["name"])), None)
+        cards.append({
+            "id": p["id"],
+            "title": p["title"],
+            "url": p["url"],
+            "image": p["image"],
+            "price": p["price"],
+            "compare_at": p["compare_at"],
+            "currency": p["currency"],
+            "platform": catalog.get("platform", ""),
+            "option_label": (p["options"][size_idx]["name"] if size_idx is not None
+                             else (" / ".join(o["name"] for o in p["options"]) if p["options"] else "")),
+            "variants": [{"id": v["id"], "title": v["title"], "available": v["available"]} for v in p["variants"][:60]],
+            "available": p["available"],
+        })
+        if len(cards) >= limit:
+            break
+    return cards
 
 
 # ── Infos generales de la boutique (accueil + conditions) ────────────────────
@@ -485,6 +682,10 @@ SITE_INFO_TTL = 6 * 3600
 SITE_INFO_CACHE = {}        # shop_url -> (timestamp, texte)
 SOCIAL_RE = re.compile(r"href=[\"'](https?://(?:www\.)?(instagram\.com|tiktok\.com|facebook\.com|youtube\.com|x\.com|twitter\.com|pinterest\.[a-z.]+)/[^\"'?#]*)", re.I)
 POLICY_PAGES = [("Livraison", "/policies/shipping-policy"), ("Retours et remboursements", "/policies/refund-policy")]
+# Guide des tailles : lien trouve sur la page d'accueil, sinon adresses courantes
+SIZE_LINK_RE = re.compile(r"href=[\"']([^\"'#]*(?:guide[-_]?(?:des[-_]?)?tailles?|size[-_]?(?:guide|chart)|tailles|sizing)[^\"'#]*)[\"']", re.I)
+SIZE_GUIDE_PATHS = ["/pages/guide-des-tailles", "/pages/size-guide", "/pages/guide-tailles", "/pages/size-chart",
+                    "/guide-des-tailles", "/size-guide"]
 
 
 def html_to_text(page: str) -> str:
@@ -502,6 +703,7 @@ def _fetch(url: str, timeout: float = 4.0) -> str:
 
 def build_site_info(shop_url: str) -> str:
     parts = []
+    home = ""
     try:
         home = _fetch(shop_url)
         socials = []
@@ -525,7 +727,27 @@ def build_site_info(shop_url: str) -> str:
                 parts.append(label.upper() + " (conditions officielles) : " + t[:2000])
         except Exception:
             pass
-    return "\n".join(parts)[:7500]
+    guide = size_guide_text(shop_url, home)
+    if guide:
+        parts.append("GUIDE DES TAILLES DE LA BOUTIQUE : " + guide)
+    return "\n".join(parts)[:9500]
+
+
+def size_guide_text(shop_url: str, home: str) -> str:
+    candidates = []
+    for href in SIZE_LINK_RE.findall(home or ""):
+        url = href if href.startswith("http") else shop_url + "/" + href.lstrip("/")
+        if _host(url) == _host(shop_url) and url not in candidates:
+            candidates.append(url)
+    candidates += [shop_url + p for p in SIZE_GUIDE_PATHS]
+    for url in candidates[:6]:
+        try:
+            t = html_to_text(_fetch(url, timeout=3.0))
+            if len(t) > 80 and re.search(r"\b(XS|S|M|L|XL|cm|tour de|poitrine|taille)\b", t, re.I):
+                return t[:2000]
+        except Exception:
+            continue
+    return ""
 
 
 def get_site_info(shop_url: str) -> str:
@@ -725,6 +947,7 @@ class UpdateClientRequest(BaseModel):
     widget_mode: Optional[str] = None       # "light" ou "dark"
     assistant_name: Optional[str] = None    # ex : "Assistant Dreamer"
     welcome_message: Optional[str] = None   # premier message affiche
+    teaser: Optional[str] = None            # bulle d'accroche : texte perso, "off" pour la couper, "" = automatique
 
 class DetectThemeRequest(BaseModel):
     token: str
@@ -777,14 +1000,15 @@ def update_client(req: UpdateClientRequest, db: Session = Depends(get_db)):
     if req.shop_url is not None:
         set_shop_url(c.token, req.shop_url, db)
 
-    if any(x is not None for x in (req.widget_color, req.widget_mode, req.assistant_name, req.welcome_message)):
+    if any(x is not None for x in (req.widget_color, req.widget_mode, req.assistant_name, req.welcome_message, req.teaser)):
         if req.widget_color and not HEX_RE.match(req.widget_color):
             raise HTTPException(status_code=400, detail="widget_color doit etre au format #rrggbb")
         if req.widget_mode and req.widget_mode not in ("light", "dark"):
             raise HTTPException(status_code=400, detail="widget_mode doit etre light ou dark")
         cfg = get_widget_config(c.token, db)
         for key, val in (("color", req.widget_color), ("mode", req.widget_mode),
-                         ("assistant_name", req.assistant_name), ("welcome", req.welcome_message)):
+                         ("assistant_name", req.assistant_name), ("welcome", req.welcome_message),
+                         ("teaser", req.teaser)):
             if val is not None:
                 cfg[key] = val.strip()[:300]
         set_widget_config(c.token, cfg, db)
@@ -824,7 +1048,7 @@ def detect_theme(req: DetectThemeRequest, db: Session = Depends(get_db)):
 def widget_config(token: str = "", db: Session = Depends(get_db)):
     """Route publique lue par le widget au chargement : uniquement l'apparence."""
     cfg = get_widget_config(token, db) if token else {}
-    return {k: cfg.get(k) for k in ("color", "mode", "assistant_name", "welcome") if cfg.get(k)}
+    return {k: cfg.get(k) for k in ("color", "mode", "assistant_name", "welcome", "teaser") if cfg.get(k)}
 
 
 @app.get("/superadmin/clients")
@@ -1147,6 +1371,9 @@ def admin_overview(client_token: str, request: Request, days: int = 30, db: Sess
         "leads": leads[:50],
         "topics": question_topics(client_token, days, questions),
         "topics_sample": len(questions),
+        "value": value_stats(client_token, db, since),
+        "value_previous": value_stats(client_token, db, prev_since, since),
+        "orders_ever": db.query(Event).filter(Event.client_token == client_token, Event.type == "order").count(),
     }
 
 
@@ -1213,6 +1440,291 @@ def demo_request(req: DemoRequest, request: Request, db: Session = Depends(get_d
         except Exception as e:
             print("DEMO EMAIL ERROR:", e)
     return {"ok": True}
+
+
+# ── Suivi de ce que le chat rapporte ──────────────────────────────────────────
+# Le widget signale les clics vers les produits et les ajouts au panier.
+# Les commandes arrivent par le pixel Shopify (attribut de panier "_replai")
+# ou par le widget sur la page de confirmation WooCommerce.
+TRACK_TYPES = {"product_click", "add_to_cart"}
+ATTRIBUTION_DAYS = 30
+
+
+async def _json_body(request: Request) -> dict:
+    """Accepte JSON ou texte brut (le pixel Shopify envoie parfois en text/plain)."""
+    try:
+        data = json.loads((await request.body()) or b"{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _to_float(v) -> Optional[float]:
+    try:
+        f = float(str(v).replace(",", "."))
+        return f if 0 <= f < 1_000_000 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _short(v, n=80) -> Optional[str]:
+    return str(v)[:n] if v not in (None, "") else None
+
+
+@app.post("/track")
+async def track(request: Request, db: Session = Depends(get_db)):
+    d = await _json_body(request)
+    token = _short(d.get("client_token"), 60)
+    kind = d.get("type")
+    if not token or kind not in TRACK_TYPES:
+        raise HTTPException(status_code=400)
+    if not db.query(Client).filter(Client.token == token).first():
+        raise HTTPException(status_code=404)
+    db.add(Event(id=str(uuid.uuid4()), client_token=token, conversation_id=_short(d.get("conversation_id")),
+                 type=kind, product_id=_short(d.get("product_id")), variant_id=_short(d.get("variant_id")),
+                 value=_to_float(d.get("value")), currency=_short(d.get("currency"), 3)))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/track-order")
+async def track_order(request: Request, db: Session = Depends(get_db)):
+    d = await _json_body(request)
+    token = _short(d.get("client_token"), 60)
+    conv_id = _short(d.get("conversation_id"))
+    order_ref = _short(d.get("order_id"), 120)
+    total = _to_float(d.get("total"))
+    if not token or not conv_id or not order_ref or total is None:
+        raise HTTPException(status_code=400)
+    conv = db.query(Conversation).filter(Conversation.id == conv_id, Conversation.client_token == token).first()
+    # Une vente n'est attribuee que si le client a vraiment parle a l'assistant recemment
+    if not conv or not conv.created_at or conv.created_at < datetime.utcnow() - timedelta(days=ATTRIBUTION_DAYS):
+        return {"ok": True, "attributed": False}
+    has_visitor_msg = db.query(MessageModel).filter(
+        MessageModel.conversation_id == conv_id, MessageModel.role == "user").first()
+    if not has_visitor_msg:
+        return {"ok": True, "attributed": False}
+    exists = db.query(Event).filter(Event.client_token == token, Event.type == "order", Event.ref == order_ref).first()
+    if exists:
+        return {"ok": True, "attributed": True}
+    db.add(Event(id=str(uuid.uuid4()), client_token=token, conversation_id=conv_id, type="order",
+                 value=total, currency=_short(d.get("currency"), 3) or "EUR", ref=order_ref))
+    db.commit()
+    print("ORDER ATTRIBUTED:", token, order_ref, total)
+    return {"ok": True, "attributed": True}
+
+
+SHOPIFY_PIXEL_TEMPLATE = """// Replai : suivi des ventes generees par l'assistant
+// A coller dans Shopify > Parametres > Evenements clients > Ajouter un pixel personnalise
+analytics.subscribe("checkout_completed", (event) => {
+  const checkout = event.data.checkout;
+  const attr = (checkout.attributes || []).find((a) => a.key === "_replai");
+  if (!attr || !attr.value) return;
+  fetch("%(base)s/track-order", {
+    method: "POST",
+    keepalive: true,
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({
+      client_token: "%(token)s",
+      conversation_id: attr.value,
+      order_id: (checkout.order && checkout.order.id) || checkout.token,
+      total: checkout.totalPrice && checkout.totalPrice.amount,
+      currency: checkout.totalPrice && checkout.totalPrice.currencyCode,
+    }),
+  });
+});
+"""
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-assistant-backend-clean-iz6y.onrender.com")
+
+
+@app.get("/superadmin/pixel-code")
+def pixel_code(token: str, superadmin_password: str):
+    if superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401)
+    return PlainTextResponse(SHOPIFY_PIXEL_TEMPLATE % {"base": PUBLIC_BASE_URL, "token": token})
+
+
+def value_stats(token: str, db: Session, since: datetime, until: Optional[datetime] = None) -> dict:
+    q = db.query(Event).filter(Event.client_token == token, Event.created_at >= since)
+    if until is not None:
+        q = q.filter(Event.created_at < until)
+    stats = {"product_clicks": 0, "add_to_cart": 0, "orders": 0, "revenue": 0.0, "currency": "EUR"}
+    for e in q.all():
+        if e.type == "product_click":
+            stats["product_clicks"] += 1
+        elif e.type == "add_to_cart":
+            stats["add_to_cart"] += 1
+        elif e.type == "order":
+            stats["orders"] += 1
+            stats["revenue"] += e.value or 0.0
+            stats["currency"] = e.currency or stats["currency"]
+    stats["revenue"] = round(stats["revenue"], 2)
+    return stats
+
+
+# ── Rapport mensuel envoye au client ──────────────────────────────────────────
+# Chaque debut de mois, chaque client recoit par email ce que son assistant a
+# fait le mois precedent : la preuve concrete de ce que Replai lui apporte.
+MONTHS_FR_ACC = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+                 "septembre", "octobre", "novembre", "décembre"]
+
+
+def month_bounds(year: int, month: int):
+    """Debut et fin du mois (heure de Paris), convertis en UTC naif comme en base."""
+    start = datetime(year, month, 1, tzinfo=LOCAL_TZ)
+    end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=LOCAL_TZ)
+    to_utc = lambda d: d.astimezone(timezone.utc).replace(tzinfo=None)
+    return to_utc(start), to_utc(end)
+
+
+def period_summary(token: str, db: Session, start: datetime, end: datetime) -> dict:
+    states = conversation_rows(token, db)
+    by_conv = messages_by_conversation(token, db, since=start)
+    convs = db.query(Conversation).filter(Conversation.client_token == token,
+                                          Conversation.created_at >= start, Conversation.created_at < end).all()
+    total = after = leads = msgs = 0
+    for conv in convs:
+        user_msgs = [m for m in by_conv.get(conv.id, []) if m.role == "user"]
+        if not user_msgs:
+            continue
+        total += 1
+        msgs += len(user_msgs)
+        t = to_local(user_msgs[0].created_at or conv.created_at)
+        if t.hour >= 20 or t.hour < 8 or t.weekday() >= 5:
+            after += 1
+        if states.get(conv.id, (STATE_NORMAL, False))[0] == STATE_DONE:
+            leads += 1
+    return {"conversations": total, "after_hours": after, "leads": leads, "visitor_messages": msgs,
+            "value": value_stats(token, db, start, end)}
+
+
+def _eur(v: float) -> str:
+    s = ("%.2f" % v).replace(".", ",")
+    s = s[:-3] if s.endswith(",00") else s
+    return s + " €"
+
+
+def report_email_html(name: str, month_label: str, s: dict, dashboard_url: str, color: str) -> str:
+    v = s["value"]
+    rows = [
+        ("Conversations avec vos clients", str(s["conversations"])),
+        ("Dont le soir, la nuit ou le week-end", str(s["after_hours"])),
+        ("Questions répondues", str(s["visitor_messages"])),
+        ("Clients à rappeler transmis", str(s["leads"])),
+        ("Clics vers vos produits", str(v["product_clicks"])),
+        ("Ajouts au panier depuis le chat", str(v["add_to_cart"])),
+    ]
+    if v["orders"]:
+        rows.append(("Commandes après une conversation", "%d (%s)" % (v["orders"], _eur(v["revenue"]))))
+    accent = color if HEX_RE.match(color or "") else "#4f46e5"
+    highlight = ""
+    if v["orders"]:
+        highlight = ("<p style='font-size:28px;font-weight:700;margin:8px 0 0;color:%s'>%s</p>"
+                     "<p style='margin:4px 0 0;color:#475569'>de ventes après une conversation avec l'assistant</p>"
+                     % (accent, _eur(v["revenue"])))
+    elif s["after_hours"]:
+        highlight = ("<p style='font-size:28px;font-weight:700;margin:8px 0 0;color:%s'>%d</p>"
+                     "<p style='margin:4px 0 0;color:#475569'>clients accompagnés quand votre boutique était fermée</p>"
+                     % (accent, s["after_hours"]))
+    table = "".join(
+        "<tr><td style='padding:10px 0;border-bottom:1px solid #eef0f3;color:#475569'>%s</td>"
+        "<td style='padding:10px 0;border-bottom:1px solid #eef0f3;text-align:right;font-weight:600'>%s</td></tr>"
+        % (html_lib.escape(k), html_lib.escape(val)) for k, val in rows)
+    return (
+        "<div style='font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a'>"
+        "<p style='color:#94a3b8;font-size:13px;margin:0'>Rapport mensuel · %s</p>"
+        "<h1 style='font-size:22px;margin:6px 0 0'>Votre assistant en %s</h1>%s"
+        "<table style='width:100%%;border-collapse:collapse;margin-top:22px;font-size:15px'>%s</table>"
+        "<p style='margin-top:24px'><a href='%s' style='background:%s;color:#fff;padding:12px 18px;"
+        "border-radius:10px;text-decoration:none;font-weight:600'>Voir le détail dans mon espace</a></p>"
+        "<p style='color:#94a3b8;font-size:12px;margin-top:28px'>Replai · l'assistant de votre boutique</p></div>"
+    ) % (html_lib.escape(name), month_label, highlight, table, html_lib.escape(dashboard_url), accent)
+
+
+def send_monthly_report(c: Client, year: int, month: int, db: Session, force: bool = False) -> str:
+    log_id = "%s:%04d-%02d" % (c.token, year, month)
+    if not force and db.query(ReportLog).filter(ReportLog.id == log_id).first():
+        return "deja envoye"
+    if not c.client_email:
+        return "pas d'email"
+    start, end = month_bounds(year, month)
+    s = period_summary(c.token, db, start, end)
+    if not s["conversations"] and not force:
+        return "aucune conversation"
+    brand = client_brand(c, db)
+    label = MONTHS_FR_ACC[month - 1] + " " + str(year)
+    v = s["value"]
+    subject = "Votre assistant en %s : %d conversation%s" % (
+        MONTHS_FR_ACC[month - 1], s["conversations"], "s" if s["conversations"] > 1 else "")
+    if v["orders"]:
+        subject += ", " + _eur(v["revenue"]) + " de ventes"
+    try:
+        resend.Emails.send({
+            "from": "Replai <noreply@gianluca-ai.fr>",
+            "to": [c.client_email],
+            "subject": subject,
+            "html": report_email_html(brand["name"], label, s,
+                                      PUBLIC_BASE_URL + "/admin?token=" + c.token, brand["color"]),
+        })
+    except Exception as e:
+        print("REPORT EMAIL ERROR:", c.token, e)
+        return "erreur : %s" % e
+    if not db.query(ReportLog).filter(ReportLog.id == log_id).first():
+        db.add(ReportLog(id=log_id))
+        db.commit()
+    return "envoye"
+
+
+def previous_month(now_local: datetime):
+    return (now_local.year - 1, 12) if now_local.month == 1 else (now_local.year, now_local.month - 1)
+
+
+class SendReportsRequest(BaseModel):
+    superadmin_password: str
+    token: Optional[str] = None      # un seul client (sinon tous)
+    month: Optional[str] = None      # "2026-10" (sinon le mois precedent)
+    force: bool = False              # renvoyer meme si deja envoye / vide (pour tester)
+
+
+@app.post("/superadmin/send-reports")
+def send_reports(req: SendReportsRequest, db: Session = Depends(get_db)):
+    if req.superadmin_password != SUPERADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Non autorise")
+    if req.month and re.fullmatch(r"\d{4}-\d{2}", req.month):
+        year, month = int(req.month[:4]), int(req.month[5:])
+    else:
+        year, month = previous_month(datetime.now(LOCAL_TZ))
+    q = db.query(Client)
+    if req.token:
+        q = q.filter(Client.token == req.token)
+    return {c.token: send_monthly_report(c, year, month, db, req.force) for c in q.all()}
+
+
+def _reports_loop():
+    """Envoie automatiquement les rapports du mois precedent, les 3 premiers jours du mois apres 9 h."""
+    while True:
+        try:
+            now = datetime.now(LOCAL_TZ)
+            if now.day <= 3 and now.hour >= 9:
+                year, month = previous_month(now)
+                db = SessionLocal()
+                try:
+                    for c in db.query(Client).all():
+                        result = send_monthly_report(c, year, month, db)
+                        if result == "envoye":
+                            print("REPORT SENT:", c.token, year, month)
+                finally:
+                    db.close()
+        except Exception as e:
+            print("REPORTS LOOP ERROR:", e)
+        time.sleep(3600)
+
+
+@app.on_event("startup")
+def start_reports_loop():
+    if os.getenv("REPORTS_AUTO", "1") != "0":
+        import threading
+        threading.Thread(target=_reports_loop, daemon=True).start()
 
 
 @app.post("/contact-human")
@@ -1299,16 +1811,14 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     else:
         base_prompt = "Tu es un assistant virtuel professionnel."
 
-    if c:
-        catalog = get_catalog_text(get_shop_url(c.token, db))
-        if catalog:
-            base_prompt += (
-                "\n\nCATALOGUE EN TEMPS REEL (source de verite pour les produits, prix et stocks : "
-                "si une autre information du prompt contredit ce catalogue, c'est le catalogue qui a raison. "
-                "Ne propose jamais un produit ou une taille absent ou epuise) :\n" + catalog
-            )
-
     shop_url = get_shop_url(c.token, db) if c else ""
+    catalog = get_catalog(shop_url) if shop_url else EMPTY_CATALOG
+    if catalog["text"]:
+        base_prompt += (
+            "\n\nCATALOGUE EN TEMPS REEL (source de verite pour les produits, prix et stocks : "
+            "si une autre information du prompt contredit ce catalogue, c'est le catalogue qui a raison. "
+            "Ne propose jamais un produit ou une taille absent ou epuise) :\n" + catalog["text"]
+        )
     if shop_url:
         site_info = get_site_info(shop_url)
         if site_info:
@@ -1333,6 +1843,25 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         "- Sois concis, professionnel et serviable\n"
         "- Si tu ne connais pas la reponse, dis-le simplement"
     )
+    if catalog["products"]:
+        base_prompt += (
+            "\n\nVENDRE COMME UN BON VENDEUR EN BOUTIQUE :\n"
+            "- Quand tu recommandes un produit, ecris son lien exact tel qu'il apparait dans le catalogue "
+            "(une seule fois, sans le mettre entre crochets) : le site l'affiche sous forme de fiche avec photo, "
+            "prix et bouton d'ajout au panier. 3 produits maximum par reponse.\n"
+            "- Si le visiteur hesite, propose 1 ou 2 produits precis et disponibles plutot qu'une liste.\n"
+            "- Ne mentionne jamais de prix, taille ou stock qui ne figure pas dans le catalogue.\n"
+            "\nCONSEIL DE TAILLE (objectif : la bonne taille du premier coup, donc moins de retours) :\n"
+            "- Si on te demande quelle taille prendre et que tu n'as pas les infos, demande en une seule question "
+            "sa taille (en cm), son poids et s'il prefere porter ajuste ou ample.\n"
+            "- Appuie-toi en priorite sur le guide des tailles de la boutique et les INFO TAILLE du catalogue "
+            "(coupe oversize, taille du mannequin...). Sans ces infos, base-toi sur les correspondances usuelles "
+            "et dis-le simplement.\n"
+            "- Donne UNE taille precise, avec la raison en une phrase (ex : 'Prenez un M : la coupe est ample, "
+            "un L serait trop long pour 1m75'). Entre deux tailles, choisis selon sa preference ajuste/ample.\n"
+            "- Verifie que la taille conseillee est disponible ; sinon dis-le et propose l'alternative la plus proche.\n"
+            "- N'invente jamais de mesures (tour de poitrine, longueur...) absentes des informations de la boutique."
+        )
 
     messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
@@ -1348,7 +1877,7 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         set_state(conv_id, STATE_PROPOSED, db)
 
     save_message(conv_id, "assistant", reply, db)
-    return bot_reply(reply, conv_id, False)
+    return bot_reply(reply, conv_id, False, product_cards(reply, catalog))
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

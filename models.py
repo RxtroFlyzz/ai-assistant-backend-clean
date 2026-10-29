@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -47,3 +47,27 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
  
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class Event(Base):
+    """Ce que le chat a declenche : clic vers un produit, ajout au panier, commande."""
+    __tablename__ = "replai_events"
+
+    id = Column(String, primary_key=True, index=True)
+    client_token = Column(String, index=True)
+    conversation_id = Column(String, index=True, nullable=True)
+    type = Column(String, index=True)          # product_click | add_to_cart | order
+    product_id = Column(String, nullable=True)
+    variant_id = Column(String, nullable=True)
+    value = Column(Float, nullable=True)       # montant (commande ou prix du produit ajoute)
+    currency = Column(String, nullable=True)
+    ref = Column(String, nullable=True)        # numero de commande (anti-doublon)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ReportLog(Base):
+    """Rapports mensuels deja envoyes (un par client et par mois)."""
+    __tablename__ = "replai_reports"
+
+    id = Column(String, primary_key=True)      # token + ":" + "2026-10"
+    sent_at = Column(DateTime, default=datetime.utcnow)
