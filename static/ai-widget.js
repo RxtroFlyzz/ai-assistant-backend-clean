@@ -608,28 +608,42 @@
     }
   }
 
-  // ── Bulle d'accroche : une fois par visite, si le chat n'a pas ete ouvert ──
+  // ── Bulle d'accroche ──────────────────────────────────────────────────────
+  // Sur chaque nouvelle page produit (3 fois maximum par visite), une fois
+  // ailleurs. Plus jamais pendant la visite si le visiteur la ferme ou ouvre le chat.
+  var TEASER_MAX = 3;
   var teaserTimer = null;
-  function hideTeaser(remember) {
+  function teaserState() {
+    try {
+      var t = JSON.parse(sessionStorage.getItem(TEASER_KEY) || "null");
+      if (t && typeof t === "object") return t;
+    } catch (e) {}
+    return { n: 0, off: false, pages: [] };
+  }
+  function saveTeaser(t) { try { sessionStorage.setItem(TEASER_KEY, JSON.stringify(t)); } catch (e) {} }
+  function hideTeaser(stopForVisit) {
     teaser.style.display = "none";
     if (teaserTimer) { clearTimeout(teaserTimer); teaserTimer = null; }
-    if (remember) { try { sessionStorage.setItem(TEASER_KEY, "1"); } catch (e) {} }
+    if (stopForVisit) { var t = teaserState(); t.off = true; saveTeaser(t); }
   }
   function scheduleTeaser() {
     if (teaserSetting === "off" || state.o || state.m.length > 1) return;
-    try { if (sessionStorage.getItem(TEASER_KEY)) return; } catch (e) {}
+    var t = teaserState();
     var onProduct = isProductPage();
+    var page = onProduct ? location.pathname : "*";
+    if (t.off || t.n >= TEASER_MAX || t.pages.indexOf(page) >= 0) return;
     teaserTimer = setTimeout(function() {
       if (state.o) return;
       var custom = teaserSetting && uiLang() === "fr" ? teaserSetting : "";
       document.getElementById("rpl-teaser-text").textContent = custom || T(onProduct ? "teaserProduct" : "teaser");
       teaser.style.display = "block";
-      try { sessionStorage.setItem(TEASER_KEY, "1"); } catch (e) {}
+      var cur = teaserState();
+      cur.n += 1; cur.pages.push(page); saveTeaser(cur);
     }, onProduct ? 6000 : 15000);
   }
   teaser.onclick = function(e) {
-    if (e.target && e.target.id === "rpl-teaser-x") { hideTeaser(true); return; }
     hideTeaser(true);
+    if (e.target && e.target.id === "rpl-teaser-x") return;
     setOpen(true);
   };
 
