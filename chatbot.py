@@ -1044,9 +1044,17 @@ def detect_theme(req: DetectThemeRequest, db: Session = Depends(get_db)):
     return {"ok": True, "detected": found, "widget": get_widget_config(c.token, db)}
 
 
+# Derniere fois que le widget a ete charge sur un site (sert a l'onglet Installation)
+WIDGET_SEEN = {}    # token -> (datetime UTC, domaine du site)
+
+
 @app.get("/widget-config")
-def widget_config(token: str = "", db: Session = Depends(get_db)):
+def widget_config(request: Request, token: str = "", db: Session = Depends(get_db)):
     """Route publique lue par le widget au chargement : uniquement l'apparence."""
+    if token:
+        site = _host(request.headers.get("referer") or request.headers.get("origin") or "")
+        if site and site not in ("aireply.fr", "localhost", "127.0.0.1"):
+            WIDGET_SEEN[token] = (datetime.utcnow(), site)
     cfg = get_widget_config(token, db) if token else {}
     return {k: cfg.get(k) for k in ("color", "mode", "assistant_name", "welcome", "teaser") if cfg.get(k)}
 
@@ -1542,6 +1550,32 @@ def pixel_code(token: str, superadmin_password: str):
     if superadmin_password != SUPERADMIN_PASSWORD:
         raise HTTPException(status_code=401)
     return PlainTextResponse(SHOPIFY_PIXEL_TEMPLATE % {"base": PUBLIC_BASE_URL, "token": token})
+
+
+WIDGET_SNIPPET = '<script src="%(base)s/static/ai-widget.js?token=%(token)s"></script>'
+
+
+@app.get("/admin/install")
+def admin_install(client_token: str, request: Request, db: Session = Depends(get_db)):
+    """Codes a installer, deja remplis pour ce client, et etat de l'installation."""
+    c = check_admin(client_token, request.headers.get("X-Admin-Password", ""), db)
+    shop = get_shop_url(c.token, db)
+    platform = get_catalog(shop)["platform"] if shop else ""
+    seen = WIDGET_SEEN.get(c.token)
+    last_conv = db.query(Conversation).filter(Conversation.client_token == c.token).order_by(
+        Conversation.created_at.desc()).first()
+    first_order = db.query(Event).filter(Event.client_token == c.token, Event.type == "order").order_by(
+        Event.created_at).first()
+    return {
+        "platform": platform,
+        "shop_url": shop,
+        "widget_snippet": WIDGET_SNIPPET % {"base": PUBLIC_BASE_URL, "token": c.token},
+        "pixel_code": SHOPIFY_PIXEL_TEMPLATE % {"base": PUBLIC_BASE_URL, "token": c.token},
+        "widget_seen_at": fmt_local(seen[0]) if seen else None,
+        "widget_seen_on": seen[1] if seen else None,
+        "last_conversation_at": fmt_local(last_conv.created_at) if last_conv else None,
+        "first_order_at": fmt_local(first_order.created_at) if first_order else None,
+    }
 
 
 def value_stats(token: str, db: Session, since: datetime, until: Optional[datetime] = None) -> dict:

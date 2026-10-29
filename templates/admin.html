@@ -94,6 +94,26 @@
   .delta-up { color: var(--ok); font-weight: 600; }
   .delta-down { color: #b91c1c; font-weight: 600; }
 
+  .status-card { margin-top: 20px; padding: 6px 20px; }
+  .status-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+  .status-row + .status-row { border-top: 1px solid var(--line); }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); flex-shrink: 0; }
+  .status-row.ok .status-dot { background: var(--ok); }
+  .status-row.wait .status-dot { background: #f59e0b; }
+  .status-row strong { font-weight: 600; }
+  .status-row span.sub { color: var(--ink-2); }
+  .platform-chips { margin-top: 18px; flex-wrap: wrap; }
+  .step { display: flex; gap: 16px; margin-top: 14px; padding: 20px; }
+  .step-num { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+  .step-body { flex: 1; min-width: 0; }
+  .step-body h2 { font-size: 16px; font-weight: 600; margin-top: 4px; }
+  .step-intro { color: var(--ink-2); margin-top: 6px; }
+  .howto { margin: 12px 0 0 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink); line-height: 1.5; }
+  .howto b { font-weight: 600; }
+  .code-box { position: relative; margin-top: 14px; background: #0f172a; border-radius: 12px; padding: 14px 14px 14px 16px; }
+  .code-box pre { color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto; padding-right: 80px; }
+  .code-box .copy { position: absolute; top: 10px; right: 10px; }
+  .help { margin-top: 12px; color: var(--ink-2); font-size: 13px; }
   .value { margin-top: 14px; padding: 18px 20px 20px; }
   .value-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .value-head h2 { font-size: 15px; font-weight: 600; }
@@ -185,7 +205,7 @@
   @media (max-width: 720px) {
     .hdr { flex-wrap: wrap; padding: 10px 14px; gap: 10px; }
     .tabs { order: 3; width: 100%; margin-left: 0; }
-    .tab { flex: 1; justify-content: center; }
+    .tab { flex: 1; justify-content: center; white-space: nowrap; padding: 8px 6px; font-size: 13px; }
     .brand-link { display: none; }
     main { padding: 18px 14px 50px; }
     .kpi-n { font-size: 26px; }
@@ -239,6 +259,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="overview">Vue d'ensemble</button>
         <button class="tab" data-tab="conversations">Conversations <span class="count hidden" id="tabCount"></span></button>
+        <button class="tab" data-tab="install">Installation</button>
       </nav>
       <div class="hdr-right">
         <select class="period" id="period" aria-label="Période">
@@ -338,6 +359,55 @@
     </div>
 
     <!-- Conversations -->
+    <div id="tab-install" class="hidden">
+      <h1 class="page-title">Installation</h1>
+      <p class="page-sub">Deux copier-coller, une seule fois. Vos codes sont déjà prêts ci-dessous.</p>
+
+      <div class="card status-card">
+        <div class="status-row" id="stWidget"></div>
+        <div class="status-row" id="stSales"></div>
+      </div>
+
+      <div class="chips platform-chips">
+        <button class="chip" data-platform="shopify">Shopify</button>
+        <button class="chip" data-platform="woocommerce">WooCommerce / WordPress</button>
+        <button class="chip" data-platform="wix">Wix</button>
+        <button class="chip" data-platform="other">Autre site</button>
+      </div>
+
+      <div class="card step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h2>Afficher l'assistant sur votre site</h2>
+          <ol class="howto" id="howWidget"></ol>
+          <div class="code-box"><pre id="codeWidget"></pre><button class="btn btn-sm btn-primary copy" data-copy="codeWidget">Copier</button></div>
+        </div>
+      </div>
+
+      <div class="card step" id="stepSales">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h2>Mesurer les ventes générées</h2>
+          <p class="step-intro" id="salesIntro"></p>
+          <ol class="howto" id="howSales"></ol>
+          <div class="code-box" id="pixelBox"><pre id="codePixel"></pre><button class="btn btn-sm btn-primary copy" data-copy="codePixel">Copier</button></div>
+        </div>
+      </div>
+
+      <div class="card step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h2>Vérifier</h2>
+          <ol class="howto">
+            <li>Ouvrez votre boutique dans une fenêtre de navigation privée : la bulle de chat apparaît en bas à droite. La première réponse peut prendre quelques secondes.</li>
+            <li>Posez une question sur un produit. La conversation apparaît dans l'onglet <strong>Conversations</strong>.</li>
+            <li>Revenez sur cette page : le statut « Assistant » passe au vert.</li>
+          </ol>
+          <p class="help">Un souci ? Écrivez-nous, on l'installe avec vous en 5 minutes.</p>
+        </div>
+      </div>
+    </div>
+
     <div id="tab-conversations" class="hidden">
       <h1 class="page-title">Conversations</h1>
       <p class="page-sub">Tout ce que vos visiteurs ont demandé, et ce que l'assistant a répondu.</p>
@@ -476,6 +546,8 @@
     document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("active", t.getAttribute("data-tab") === name); });
     $("tab-overview").classList.toggle("hidden", name !== "overview");
     $("tab-conversations").classList.toggle("hidden", name !== "conversations");
+    $("tab-install").classList.toggle("hidden", name !== "install");
+    if (name === "install") loadInstall();
     window.scrollTo(0, 0);
   }
   $("period").onchange = function () {
@@ -486,6 +558,118 @@
   $("refreshBtn").onclick = loadAll;
 
   function loadAll() { loadOverview(); loadConvs(); }
+
+  // ── Installation ────────────────────────────────────────────────────────
+  var install = null, platformChoice = null;
+  var GUIDES = {
+    shopify: {
+      widget: [
+        "Dans votre admin Shopify, allez dans <b>Boutique en ligne → Thèmes</b>.",
+        "Sur votre thème actif, cliquez sur <b>…</b> puis <b>Modifier le code</b>.",
+        "À gauche, dossier <b>layout</b>, ouvrez <b>theme.liquid</b>.",
+        "Faites <b>Ctrl+F</b> (ou Cmd+F) et cherchez <b>&lt;/body&gt;</b>, tout en bas.",
+        "Collez le code juste <b>au-dessus</b> de &lt;/body&gt;, sur sa propre ligne, puis cliquez sur <b>Enregistrer</b>."
+      ],
+      salesIntro: "Pour afficher dans votre espace les ventes passées après une conversation avec l'assistant.",
+      sales: [
+        "Dans votre admin Shopify, allez dans <b>Paramètres → Événements clients</b>.",
+        "Cliquez sur <b>Ajouter un pixel personnalisé</b> et nommez-le <b>Replai</b>.",
+        "Effacez le contenu de la zone de code et collez le code ci-dessous.",
+        "Cliquez sur <b>Enregistrer</b>, puis sur <b>Connecter</b>."
+      ],
+      pixel: true
+    },
+    woocommerce: {
+      widget: [
+        "Dans WordPress, allez dans <b>Extensions → Ajouter</b> et installez l'extension gratuite <b>WPCode</b> (« Insert Headers and Footers »).",
+        "Ouvrez <b>Code Snippets → Header &amp; Footer</b>.",
+        "Collez le code dans la zone <b>Footer</b>, puis cliquez sur <b>Enregistrer</b>."
+      ],
+      salesIntro: "Rien à faire : avec WooCommerce, l'assistant reconnaît automatiquement les commandes passées après une conversation.",
+      sales: [],
+      pixel: false
+    },
+    wix: {
+      widget: [
+        "Dans votre tableau de bord Wix, allez dans <b>Paramètres → Code personnalisé</b> (section Avancé).",
+        "Cliquez sur <b>Ajouter du code</b> et collez le code.",
+        "Choisissez <b>Toutes les pages</b>, chargement <b>une seule fois</b>, emplacement <b>Body - fin</b>, puis <b>Appliquer</b>."
+      ],
+      salesIntro: "Le suivi automatique des ventes est disponible pour Shopify et WooCommerce. Sur Wix, l'espace affiche les conversations, les clients à rappeler et les ajouts au panier.",
+      sales: [],
+      pixel: false
+    },
+    other: {
+      widget: [
+        "Ouvrez le modèle commun à toutes vos pages (souvent le pied de page, « footer »).",
+        "Collez le code juste avant la balise <b>&lt;/body&gt;</b> et enregistrez.",
+        "Si vous ne savez pas où le mettre, envoyez ce code à la personne qui gère votre site : c'est une seule ligne."
+      ],
+      salesIntro: "Le suivi automatique des ventes est disponible pour Shopify et WooCommerce.",
+      sales: [],
+      pixel: false
+    }
+  };
+  function loadInstall() {
+    api("/admin/install").then(function (d) {
+      install = d;
+      if (!platformChoice) platformChoice = d.platform || "shopify";
+      renderInstall();
+    }).catch(function () {});
+  }
+  document.querySelectorAll("[data-platform]").forEach(function (b) {
+    b.onclick = function () { platformChoice = b.getAttribute("data-platform"); renderInstall(); };
+  });
+  function statusRow(el, state, title, sub) {
+    el.className = "status-row " + state;
+    el.innerHTML = "<span class='status-dot'></span><div><strong>" + esc(title) + "</strong> <span class='sub'>" + esc(sub) + "</span></div>";
+  }
+  function renderInstall() {
+    if (!install) return;
+    document.querySelectorAll("[data-platform]").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-platform") === platformChoice);
+    });
+    var g = GUIDES[platformChoice] || GUIDES.other;
+    $("howWidget").innerHTML = g.widget.map(function (x) { return "<li>" + x + "</li>"; }).join("");
+    $("codeWidget").textContent = install.widget_snippet;
+    $("salesIntro").textContent = g.salesIntro;
+    $("howSales").innerHTML = g.sales.map(function (x) { return "<li>" + x + "</li>"; }).join("");
+    $("howSales").classList.toggle("hidden", !g.sales.length);
+    $("pixelBox").classList.toggle("hidden", !g.pixel);
+    $("codePixel").textContent = install.pixel_code;
+
+    if (install.widget_seen_at) {
+      statusRow($("stWidget"), "ok", "Assistant : installé", "vu sur " + (install.widget_seen_on || "votre site") + " le " + fmtDate(install.widget_seen_at, true));
+    } else if (install.last_conversation_at) {
+      statusRow($("stWidget"), "ok", "Assistant : installé", "dernière conversation le " + fmtDate(install.last_conversation_at, true));
+    } else {
+      statusRow($("stWidget"), "wait", "Assistant : pas encore détecté", "suivez l'étape 1, puis ouvrez votre boutique pour le vérifier");
+    }
+    if (install.first_order_at) {
+      statusRow($("stSales"), "ok", "Suivi des ventes : actif", "première vente reçue le " + fmtDate(install.first_order_at, true));
+    } else if (platformChoice === "shopify") {
+      statusRow($("stSales"), "wait", "Suivi des ventes : en attente", "il s'active à la première commande passée après une conversation (étape 2)");
+    } else if (platformChoice === "woocommerce") {
+      statusRow($("stSales"), "wait", "Suivi des ventes : automatique", "la première vente apparaîtra ici");
+    } else {
+      statusRow($("stSales"), "", "Suivi des ventes", "disponible pour Shopify et WooCommerce");
+    }
+  }
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.onclick = function () {
+      var text = $(b.getAttribute("data-copy")).textContent;
+      var done = function () { b.textContent = "Copié ✓"; setTimeout(function () { b.textContent = "Copier"; }, 1800); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+      } else { fallbackCopy(text); done(); }
+    };
+  });
+  function fallbackCopy(text) {
+    var t = document.createElement("textarea");
+    t.value = text; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    t.remove();
+  }
 
   // ── Vue d'ensemble ──────────────────────────────────────────────────────
   function fmtDate(s, withTime) {
