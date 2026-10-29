@@ -480,12 +480,29 @@
   }
   function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   // Variante citee dans la reponse (ex. "Prenez un M") : on la preselectionne
+  // Taille conseillee dans la reponse : on privilegie celle qui suit "je vous conseille",
+  // "prenez", "taille"... et on ignore les listes ("disponible en XS, S, M").
+  var RECO_RE = /(conseill|recommand|pren(ez|ds|dre)|opte|optez|choisi|partir sur|id[ée]al|suggest|recommend|go for|take|pick)/i;
   function suggestedVariant(card, text) {
     var avail = card.variants.filter(function(v) { return v.available && v.title; });
-    for (var i = 0; i < avail.length; i++) {
-      var re = new RegExp("(^|[\\s(«\"'])" + escapeRe(avail[i].title) + "(?=[\\s.,!?)»\"']|$)");
-      if (re.test(text)) return avail[i].id;
-    }
+    var best = null, bestScore = 0;
+    avail.forEach(function(v) {
+      var re = new RegExp("(^|[\\s(«\"'])" + escapeRe(v.title) + "(?=[\\s.,!?:;)»\"']|$)", "g"), m;
+      while ((m = re.exec(text)) !== null) {
+        var start = m.index + m[1].length, end = start + v.title.length;
+        // Seulement la phrase en cours : "...la taille M. Le modele porte un S" ne doit pas compter pour S
+        var before = text.slice(Math.max(0, start - 60), start).split(/[.!?\n]/).pop();
+        var after = text.slice(end, end + 3);
+        var inList = /,\s*$/.test(before) || /^\s*,/.test(after) || /^\s*(et|ou|and|or)\s/i.test(text.slice(end, end + 5));
+        var score = 0;
+        if (RECO_RE.test(before)) score += 3;
+        if (/(taille|size|un|le|en|du)\s*$/i.test(before)) score += 1;
+        if (inList) score -= 3;
+        if (/(mannequin|mod[eè]le|model|porte|wears|[ée]puis|sold out|rupture)/i.test(before)) score -= 3;
+        if (score > bestScore) { bestScore = score; best = v.id; }
+      }
+    });
+    if (best) return best;
     var first = card.variants.filter(function(v) { return v.available; })[0];
     return first ? first.id : null;
   }

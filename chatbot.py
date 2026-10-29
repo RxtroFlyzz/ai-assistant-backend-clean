@@ -348,7 +348,8 @@ CATALOG_CACHE = {}          # shop_url -> (timestamp, {"platform", "products", "
 EMPTY_CATALOG = {"platform": "", "products": [], "text": ""}
 SIZE_OPTION_RE = re.compile(r"taille|size|pointure|talla|gr(o|ö)(ss|ß)e|misura", re.I)
 FIT_RE = re.compile(r"[^.!?\n]*(mannequin|mod[eè]le (mesure|porte|fait)|porte (un|une|du|la|le) |mesure \d|oversize|coupe |taille (grand|petit|normalement)|"
-                    r"runs (small|large)|true to size|fits|prenez|prendre (une|la) taille|cm de)[^.!?\n]*[.!?]?", re.I)
+                    r"runs (small|large)|true to size|fits|prenez|prendre (une|la) taille|cm de|"
+                    r"model'?s?\b|wears? size|height \d|boxy|relaxed fit|regular fit|slim fit|loose fit)[^.!?\n]*[.!?]?", re.I)
 
 
 def normalize_shop_url(url: str) -> str:
@@ -1967,12 +1968,20 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "\nCONSEIL DE TAILLE (objectif : la bonne taille du premier coup, donc moins de retours) :\n"
             "- Si on te demande quelle taille prendre et que tu n'as pas les infos, demande en une seule question "
             "sa taille (en cm), son poids et s'il prefere porter ajuste ou ample.\n"
-            "- Appuie-toi en priorite sur le guide des tailles de la boutique et les INFO TAILLE du catalogue "
-            "(coupe oversize, taille du mannequin...). Sans ces infos, base-toi sur les correspondances usuelles "
-            "et dis-le simplement.\n"
+            "- Appuie-toi en priorite sur le guide des tailles de la boutique et sur les INFO TAILLE DU PRODUIT "
+            "CONCERNE uniquement (jamais celles d'un autre produit : chaque modele a sa coupe et son mannequin). "
+            "Sans ces infos, base-toi sur les correspondances usuelles et dis-le simplement.\n"
+            "- Avec la taille du mannequin : compare-la a celle du client. En gros, une taille au-dessus tous les "
+            "8 a 10 cm de plus, une en dessous tous les 8 a 10 cm de moins ; ajuste ensuite selon la corpulence "
+            "(mince ou carre) et la preference ajuste/ample. Pour une personne grande et mince, la longueur compte "
+            "plus que la largeur. Cite le chiffre du mannequin dans ta raison.\n"
             "- Donne UNE taille precise, avec la raison en une phrase (ex : 'Prenez un M : la coupe est ample, "
             "un L serait trop long pour 1m75'). Entre deux tailles, choisis selon sa preference ajuste/ample.\n"
-            "- Verifie que la taille conseillee est disponible ; sinon dis-le et propose l'alternative la plus proche.\n"
+            "- Verifie que la taille conseillee est disponible ; si elle est epuisee, dis-le clairement, puis propose "
+            "la taille disponible la plus proche en expliquant la difference (ex : 'le L serait ideal mais il est "
+            "epuise ; le M vous ira plus court').\n"
+            "- Dans ta reponse, ne cite qu'une seule taille (celle que tu conseilles) : n'enumere pas toutes les "
+            "tailles disponibles, la fiche produit affichee sous ton message permet deja de les voir.\n"
             "- N'invente jamais de mesures (tour de poitrine, longueur...) absentes des informations de la boutique."
         )
 
