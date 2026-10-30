@@ -691,13 +691,17 @@ def size_estimates(catalog: dict, height: int) -> list:
         if idx is None:
             continue
         models = []
-        for m in MODEL_FIT_RE.finditer(p.get("fit", "") + " " + p.get("desc", "")):
+        src = p.get("fit", "") + " " + p.get("desc", "")
+        for m in MODEL_FIT_RE.finditer(src):
             mh, ms = _cm(m.group(1)), SIZE_WORDS.get(m.group(2).upper().replace(" ", ""))
             if mh and ms:
-                models.append((abs(mh - height), mh, ms))
+                before = src[max(0, m.start() - 30):m.start()].lower()
+                gender = ("femme" if re.search(r"wom[ae]n|femme|fille|girl", before)
+                          else "homme" if re.search(r"\bm[ae]n\b|homme|gar[cç]on|\bguy", before) else "")
+                models.append((abs(mh - height), mh, ms, gender))
         if not models:
             continue
-        _, mh, ms = min(models)
+        _, mh, ms, gender = min(models)
         sizes = [v for v in SIZE_LADDER if v in [x.upper() for x in p["options"][idx]["values"]]]
         if ms not in sizes:
             continue
@@ -708,7 +712,11 @@ def size_estimates(catalog: dict, height: int) -> list:
                 avail.add(str(v["options"][idx]).upper())
         if not avail:
             continue    # produit entierement epuise : rien a conseiller
-        base = "(mannequin %d cm en %s)" % (mh, ms)
+        base = "(mannequin%s %d cm en %s)" % (" " + gender if gender else "", mh, ms)
+        if abs(height - mh) >= 18:
+            base += " - estimation approximative, l'ecart avec le mannequin est grand"
+            if gender == "femme" and height >= 178:
+                base += " et c'est un mannequin femme : si le visiteur est un homme, dis que c'est indicatif"
         if target in avail:
             line = "- %s : CONSEIL = %s, taille ideale et disponible %s" % (p["title"], target, base)
         else:
@@ -793,6 +801,23 @@ def html_to_text(page: str) -> str:
     return strip_html(page)
 
 
+def main_content(page: str) -> str:
+    """Texte utile d'une page : le corps d'une page de conditions Shopify, sinon <main>.
+    Evite l'en-tete (menu, liste de 200 pays...) qui remplissait tout l'extrait."""
+    page = page or ""
+    i = page.find("shopify-policy__body")
+    if i >= 0:
+        j = page.find("</main", i)
+        return html_to_text(page[page.find(">", i) + 1: j if j > 0 else None])
+    m = re.search(r"(?is)<main\b[^>]*>(.*)</main>", page)
+    return html_to_text(m.group(1) if m else page)
+
+
+def footer_content(page: str) -> str:
+    m = re.search(r"(?is)<footer\b[^>]*>(.*)</footer>", page or "")
+    return html_to_text(m.group(1)) if m else ""
+
+
 def _fetch(url: str, timeout: float = 4.0) -> str:
     r = httpx.get(url, timeout=timeout, follow_redirects=True,
                   headers={"User-Agent": "Mozilla/5.0 (compatible; Replai-Info/1.0)"})
@@ -809,10 +834,13 @@ def build_site_info(shop_url: str) -> str:
         for url, net in SOCIAL_RE.findall(home):
             if url.rstrip("/").count("/") >= 3 and url not in socials:
                 socials.append(url.rstrip("/"))
-        text = html_to_text(home)
-        # Le haut (bandeau, accroche) et le bas (newsletter, contact) sont les plus utiles
-        excerpt = text if len(text) <= 2800 else text[:1200] + " (...) " + text[-1600:]
-        parts.append("PAGE D'ACCUEIL (extrait) : " + excerpt)
+        banner = re.search(r"(?is)<(?:div|section|aside)[^>]*announcement[^>]*>(.*?)</(?:div|section|aside)>", home)
+        if banner and html_to_text(banner.group(1)):
+            parts.append("BANDEAU DU SITE : " + html_to_text(banner.group(1))[:300])
+        body, foot = main_content(home), footer_content(home)
+        parts.append("PAGE D'ACCUEIL (extrait) : " + (body[:1800] + (" (...)" if len(body) > 1800 else "")))
+        if foot:
+            parts.append("PIED DE PAGE : " + foot[:900])
         if re.search(r"newsletter|contact\[tags\]|inscri(vez|ption)|subscribe|abonnez", home, re.I):
             parts.append("NEWSLETTER : le site propose une inscription a la newsletter (formulaire sur le site, generalement en bas de page).")
         if socials:
@@ -821,7 +849,7 @@ def build_site_info(shop_url: str) -> str:
         print("SITE INFO HOME ERROR:", shop_url, e)
     for label, path in POLICY_PAGES:
         try:
-            t = html_to_text(_fetch(shop_url + path))
+            t = main_content(_fetch(shop_url + path))
             if len(t) > 40:
                 parts.append(label.upper() + " (conditions officielles) : " + t[:2000])
         except Exception:
@@ -841,7 +869,7 @@ def size_guide_text(shop_url: str, home: str) -> str:
     candidates += [shop_url + p for p in SIZE_GUIDE_PATHS]
     for url in candidates[:6]:
         try:
-            t = html_to_text(_fetch(url, timeout=3.0))
+            t = main_content(_fetch(url, timeout=3.0))
             if len(t) > 80 and re.search(r"\b(XS|S|M|L|XL|cm|tour de|poitrine|taille)\b", t, re.I):
                 return t[:2000]
         except Exception:
@@ -2048,84 +2076,112 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     if page_ok:
         base_prompt += "\n\nCONTENU DE LA PAGE CONSULTEE PAR LE VISITEUR :\n" + msg.page_content
 
-    base_prompt += (
-        "\n\nREGLES :\n"
-        "- Reponds TOUJOURS dans la meme langue que le dernier message du visiteur\n"
-        "- Reponds uniquement aux questions liees a l activite du business\n"
-        "- Si tu ne connais pas la reponse, dis-le simplement\n"
-        "\nSTYLE (ecris comme un bon vendeur qui parle a un client en boutique, pas comme un robot) :\n"
-        "- Commence directement par la reponse. Ne reformule jamais la question du visiteur "
-        "(pas de 'Pour un t-shirt avec votre taille de 1m89...').\n"
-        "- Court : 2 ou 3 phrases en general, en petits paragraphes. Pas de listes sauf si on te demande plusieurs produits.\n"
-        "- Mots simples et naturels, comme a l'oral. Pas de formules toutes faites ni de compliments "
-        "('silhouette elancee', 'n'hesitez pas', 'je reste a votre disposition').\n"
-        "- Adopte le registre du visiteur : s'il tutoie, tutoie ; sinon vouvoie.\n"
-        "- Ne termine pas par 'voici le lien', 'commander ici' ou 'cliquez ici' : la fiche produit s'affiche "
-        "toute seule sous ton message.\n"
-        "- Une seule question a la fin, et seulement si elle aide vraiment (ex : la couleur preferee)."
-    )
-    if catalog["products"]:
+    shop_mode = bool(catalog["products"])
+    height = visitor_height(visitor_msgs) if shop_mode else None
+    estimates = size_estimates(catalog, height) if height else []
+    if estimates:
         base_prompt += (
-            "\n\nVENDRE COMME UN BON VENDEUR EN BOUTIQUE :\n"
-            "- Quand tu recommandes un produit, ecris son lien exact tel qu'il apparait dans le catalogue "
-            "(une seule fois, sans le mettre entre crochets) : le site l'affiche sous forme de fiche avec photo, "
-            "prix et bouton d'ajout au panier. 3 produits maximum par reponse.\n"
-            "- Si le visiteur hesite, propose 1 ou 2 produits precis et disponibles plutot qu'une liste.\n"
-            "- Respecte TOUJOURS le type de produit demande (manches courtes n'est pas manches longues, un t-shirt "
-            "n'est pas un sweat, un tableau n'est pas un vetement). Ne propose jamais un autre type de produit pour "
-            "contourner une rupture de stock : propose d'abord une autre taille ou une autre couleur du meme type. "
-            "Seulement si plus rien du type demande n'est disponible, dis-le clairement, puis suggere une alternative "
-            "en la presentant comme telle.\n"
-            "- Ne mentionne jamais de prix, taille ou stock qui ne figure pas dans le catalogue.\n"
-            "\nCONSEIL DE TAILLE (objectif : la bonne taille du premier coup, donc moins de retours) :\n"
-            "- Si on te demande quelle taille prendre et que tu n'as pas les infos, demande en une seule question "
-            "sa taille (en cm), son poids et s'il prefere porter ajuste ou ample.\n"
-            "- Appuie-toi en priorite sur le guide des tailles de la boutique et sur les INFO TAILLE DU PRODUIT "
-            "CONCERNE uniquement (jamais celles d'un autre produit : chaque modele a sa coupe et son mannequin). "
-            "Sans ces infos, base-toi sur les correspondances usuelles et dis-le simplement.\n"
-            "- Avec la taille du mannequin : compare-la a celle du client. En gros, une taille au-dessus tous les "
-            "8 a 10 cm de plus, une en dessous tous les 8 a 10 cm de moins ; ajuste ensuite selon la corpulence "
-            "(mince ou carre) et la preference ajuste/ample. Pour une personne grande et mince, la longueur compte "
-            "plus que la largeur. Cite le chiffre du mannequin dans ta raison.\n"
-            "- Donne UNE taille precise, avec la raison en une phrase (ex : 'Prenez un M : la coupe est ample, "
-            "un L serait trop long pour 1m75'). Entre deux tailles, choisis selon sa preference ajuste/ample.\n"
-            "- Verifie que la taille conseillee est disponible ; si elle est epuisee, dis-le clairement, puis propose "
-            "la taille disponible la plus proche en expliquant la difference (ex : 'le L serait ideal mais il est "
-            "epuise ; le M vous ira plus court').\n"
-            "- Dans ta reponse, ne cite qu'une seule taille (celle que tu conseilles) : n'enumere pas toutes les "
-            "tailles disponibles, la fiche produit affichee sous ton message permet deja de les voir.\n"
-            "- N'invente jamais de mesures (tour de poitrine, longueur...) absentes des informations de la boutique.\n"
-            "- Quand tu recommandes un produit, mets son lien seul a la fin du message, sans phrase du type "
-            "'voici le lien' : la fiche produit s'affiche automatiquement."
+            "\n\nTAILLE CONSEILLEE POUR CE VISITEUR (%d cm), deja calculee produit par produit a partir du mannequin "
+            "et du stock. Reprends-la telle quelle pour le produit concerne (ajuste d'une taille seulement si le "
+            "visiteur parle de sa corpulence ou prefere ajuste/ample) :\n" % height + "\n".join(estimates)
         )
-        height = visitor_height(visitor_msgs)
-        estimates = size_estimates(catalog, height) if height else []
-        if estimates:
-            base_prompt += (
-                "\n\nCONSEIL DE TAILLE CALCULE POUR CE VISITEUR (%d cm), produit par produit, a partir du mannequin. "
-                "Donne exactement ce CONSEIL pour le produit concerne et reprends sa raison (tu peux l'ajuster d'une "
-                "taille seulement si le visiteur precise une corpulence ou une preference ajuste/ample). Quand la taille "
-                "ideale est epuisee, dis-le clairement. Les produits absents de cette liste n'ont aucune taille "
-                "disponible :\n" % height
-                + "\n".join(estimates)
-            )
+    base_prompt += build_reply_rules(shop_mode)
 
     messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=messages_for_openai
-    )
-    reply = response.choices[0].message.content
+    reply, picks = ask_assistant(messages_for_openai, shop_mode)
 
     if GPT_PROPOSES_HUMAN.search(reply):
         set_state(conv_id, STATE_PROPOSED, db)
 
     save_message(conv_id, "assistant", reply, db)
-    cards = product_cards(reply, catalog)
+    cards = cards_from_picks(picks, catalog) if picks else product_cards(reply, catalog)
     return bot_reply(clean_card_links(reply, cards), conv_id, False, cards)
+
+
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4.1-mini")
+
+REPLY_RULES = """
+
+COMMENT REPONDRE
+Tu es le vendeur de cette boutique, dans le chat du site. Tu parles comme un bon vendeur en magasin : direct, simple, chaleureux, jamais commercial ou robotique.
+
+1. Reponds d'abord a la question, en 1 a 3 phrases courtes. Une idee par phrase. Pas de longue phrase avec plein de "et" et de "donc".
+2. Ne reformule pas la question, pas de compliments ni de formules toutes faites ("excellent choix", "silhouette elancee", "profite de sa belle matiere", "n'hesite pas").
+3. Reponds dans la langue du dernier message du visiteur. S'il tutoie, tutoie ; sinon vouvoie.
+4. Utilise uniquement les informations de ce prompt (catalogue, infos du site, page consultee). Si l'information n'y est pas, ne l'invente pas et n'affirme pas non plus que la chose n'existe pas (ex : un code promo) : dis simplement que tu n'as pas l'info et propose de transmettre la question a l'equipe. En cas de contradiction, les conditions officielles (livraison, retours) priment sur le reste du site.
+5. Si la question est vague ou peut vouloir dire plusieurs choses, pose UNE question courte pour preciser plutot que de deviner (ex : "Tu cherches plutot un t-shirt ou un sweat ?").
+6. Reste sur l'activite de la boutique ; pour le reste, reponds poliment que tu ne peux aider que sur la boutique."""
+
+SHOP_RULES = """
+7. Produits : respecte le type demande (manches courtes n'est pas manches longues, un tableau n'est pas un vetement). Ne propose jamais un autre type de produit pour contourner une rupture : d'abord une autre taille ou une autre couleur du meme produit. Si plus rien n'est disponible dans ce type, dis-le, puis propose une alternative en la presentant comme telle.
+8. Ne propose que des produits et des tailles disponibles dans le catalogue. N'invente aucune mesure, matiere, delai ou stock. Si un produit demande est epuise, dis-le et propose dans la meme reponse l'alternative disponible la plus proche (autre couleur ou autre taille du meme type).
+9. Taille : donne UNE taille et la raison en une phrase (ex : "Le mannequin fait 1m75 et porte un S."). Si la taille ideale est epuisee, dis-le simplement et donne la plus proche disponible. S'il te manque sa taille ou sa morphologie, demande-la en une question.
+10. Le prix, la photo et le bouton d'ajout au panier s'affichent automatiquement sous ton message pour chaque produit que tu recommandes : ne mets ni lien, ni prix, ni nom de produit en fin de message, et ne dis pas "voici le lien" ou "commande ici".
+
+FORMAT : reponds uniquement avec un objet JSON :
+{"message": "ce que tu dis au visiteur", "produits": [{"url": "url exacte du produit dans le catalogue", "taille": "taille conseillee, ou vide"}]}
+"produits" contient 0 a 3 produits que tu recommandes vraiment dans ton message (liste vide si la question ne porte pas sur un produit precis).
+
+EXEMPLES DU TON ATTENDU
+Visiteur : "je fais 1m89, quel t-shirt tu me conseilles ?"
+{"message": "Je partirais sur le Kiss Tee blanc en M.\\nLe mannequin fait 1m75 et porte un S, donc le L aurait été idéal, mais il est épuisé. Le M t'ira un peu plus court et près du corps.", "produits": [{"url": "https://boutique.fr/products/kiss-tee-white", "taille": "M"}]}
+Visiteur : "Je veux le sweat noir en L"
+{"message": "Le sweat noir est épuisé dans toutes les tailles, désolé.\\nIl reste le même en gris, disponible en L.", "produits": [{"url": "https://boutique.fr/products/sweat-gris", "taille": "L"}]}
+Visiteur : "Vous livrez en Belgique ?"
+{"message": "Oui, on livre en Belgique. La livraison est offerte dès 80 € en Europe ; en dessous, le tarif s'affiche au moment de payer.", "produits": []}
+Visiteur : "c'est quoi le mieux ?"
+{"message": "Ça dépend de ce que tu cherches : plutôt un vêtement ou un tableau ?", "produits": []}"""
+
+PLAIN_FORMAT = """
+
+FORMAT : reponds uniquement avec un objet JSON : {"message": "ce que tu dis au visiteur", "produits": []}"""
+
+
+def build_reply_rules(shop_mode: bool) -> str:
+    return REPLY_RULES + ("\n" + SHOP_RULES if shop_mode else PLAIN_FORMAT)
+
+
+def ask_assistant(messages: list, shop_mode: bool):
+    """Renvoie (texte du message, produits choisis). Si le JSON est illisible, on garde le texte brut."""
+    response = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.4,
+    )
+    raw = (response.choices[0].message.content or "").strip()
+    try:
+        data = json.loads(raw)
+        text = str(data.get("message") or "").strip()
+        picks = data.get("produits") or []
+        if text:
+            return text, [p for p in picks if isinstance(p, dict)][:3]
+    except Exception as e:
+        print("REPLY JSON ERROR:", e, raw[:200])
+    return raw, []
+
+
+def cards_from_picks(picks: list, catalog: dict) -> list:
+    """Fiches produit a partir des produits choisis par l'IA (url + taille conseillee)."""
+    by_key = {_url_key(p["url"]): p for p in catalog.get("products", []) if p.get("url")}
+    by_title = {p["title"].lower(): p for p in catalog.get("products", [])}
+    cards, seen = [], set()
+    for pick in picks:
+        url = str(pick.get("url") or "")
+        p = by_key.get(_url_key(url)) or by_title.get(str(pick.get("titre") or pick.get("title") or "").lower())
+        if not p or p["id"] in seen:
+            continue
+        seen.add(p["id"])
+        card = product_cards(p["url"], {"platform": catalog.get("platform", ""), "products": [p]}, 1)
+        if card:
+            size = str(pick.get("taille") or "").strip()
+            if size:
+                card[0]["size"] = size
+            cards.append(card[0])
+    return cards
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

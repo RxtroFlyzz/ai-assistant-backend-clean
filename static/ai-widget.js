@@ -485,6 +485,15 @@
   var RECO_RE = /(conseill|recommand|pren(ez|ds|dre)|opte|optez|choisi|partir sur|id[ée]al|suggest|recommend|go for|take|pick)/i;
   function suggestedVariant(card, text) {
     var avail = card.variants.filter(function(v) { return v.available && v.title; });
+    // Taille conseillee transmise par le serveur : prioritaire
+    if (card.size) {
+      var want = String(card.size).trim().toLowerCase();
+      var exact = avail.filter(function(v) {
+        var t = v.title.toLowerCase();
+        return t === want || t.split(" / ").indexOf(want) >= 0;
+      })[0];
+      if (exact) return exact.id;
+    }
     var best = null, bestScore = 0;
     avail.forEach(function(v) {
       var re = new RegExp("(^|[\\s(«\"'])" + escapeRe(v.title) + "(?=[\\s.,!?:;)»\"']|$)", "g"), m;
