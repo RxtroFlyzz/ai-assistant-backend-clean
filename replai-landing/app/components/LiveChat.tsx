@@ -221,7 +221,7 @@ function Frame({
           </p>
         </div>
       </div>
-      <div ref={bodyRef} className={`livechat-body relative flex flex-col justify-start gap-3 overflow-hidden px-4 py-5 ${bodyClass}`}>
+      <div ref={bodyRef} className={`livechat-body relative flex flex-col justify-start gap-3 px-4 py-5 ${bodyClass}`}>
         {children}
       </div>
       {footer}
@@ -310,10 +310,10 @@ export function HeroChat({
     let alive = true;
     (async () => {
       setMsgs([intro[0]]);
-      await t(700);
+      await t(1800);
       if (!alive) return;
       setTyping(true);
-      await t(1400);
+      await t(1800);
       if (!alive) return;
       setTyping(false);
       setMsgs(intro.slice(0, 2));
@@ -388,7 +388,7 @@ export function HeroChat({
         accent={accent}
         dark={false}
         bodyRef={body}
-        bodyClass="h-[360px] sm:h-[380px]"
+        bodyClass="chat-scroll h-[360px] overflow-y-auto sm:h-[380px]"
         footer={
           <div>
             <div className="min-h-[52px] px-4 pb-3 pt-2">
@@ -537,7 +537,7 @@ export function NightChat({
         accent={accent}
         dark
         bodyRef={body}
-        bodyClass="h-[270px] sm:h-[400px]"
+        bodyClass="h-[270px] overflow-hidden sm:h-[400px]"
         footer={<InputRow dark accent={accent} draft="" placeholder={placeholder} sending={false} />}
       >
         <AnimatePresence initial={false}>
