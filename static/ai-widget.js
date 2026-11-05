@@ -182,6 +182,7 @@
     "  border:1px solid var(--rpl-border); border-radius:10px;",
     "  cursor:pointer; font-size:13px; font-weight:600;",
     "  font-family:inherit; transition:opacity 0.2s,transform 0.2s; flex-shrink:0;",
+    "  display:flex; align-items:center; justify-content:center; gap:7px;",
     "}",
     "#rpl-human-btn:hover { transform:translateY(-1px); }",
     "#rpl-human-btn:disabled { opacity:0.55; cursor:default; transform:none; }",
@@ -240,17 +241,27 @@
   ].join("\n");
   document.head.appendChild(style);
 
+  // Icones au trait (pas d'emoji) : rendu net et identique sur tous les appareils.
+  function svg(paths, size, sw) {
+    return "<svg viewBox='0 0 24 24' width='" + size + "' height='" + size + "' fill='none' stroke='currentColor' stroke-width='" + (sw || 2) +
+      "' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>" + paths + "</svg>";
+  }
+  var ICON_CHAT = "<path d='M5 6.5h14v9H11l-4 3v-3H5z'/><path d='M9.5 11h.01M14.5 11h.01'/>";
+  var ICON_SEND = "<path d='M4 12l16-8-6 16-2.5-6.5z'/><path d='M11.5 13.5L20 4'/>";
+  var ICON_PERSON = "<circle cx='12' cy='8' r='3.5'/><path d='M5 20a7 7 0 0 1 14 0'/>";
+  function humanLabel() { return svg(ICON_PERSON, 15, 2) + "<span>" + T("human") + "</span>"; }
+
   var button = document.createElement("button");
   button.id = "rpl-btn";
   button.setAttribute("aria-label", "Ouvrir le chat");
-  button.innerHTML = "&#128172;";
+  button.innerHTML = svg(ICON_CHAT, 26, 2);
 
   var box = document.createElement("div");
   box.id = "rpl-box";
   box.innerHTML = [
     "<div id='rpl-header'>",
     "  <div id='rpl-header-left'>",
-    "    <div id='rpl-avatar'>&#129302;</div>",
+    "    <div id='rpl-avatar'>" + svg(ICON_CHAT, 18, 2.2) + "</div>",
     "    <div>",
     "      <div id='rpl-title'></div>",
     "      <div id='rpl-status'><span id='rpl-dot'></span> <span id='rpl-online'></span></div>",
@@ -264,7 +275,7 @@
     "<button id='rpl-human-btn'></button>",
     "<div id='rpl-input-row'>",
     "  <input id='rpl-input' autocomplete='off' />",
-    "  <button id='rpl-send'>&#10148;</button>",
+    "  <button id='rpl-send'>" + svg(ICON_SEND, 17, 2) + "</button>",
     "</div>"
   ].join("");
 
@@ -396,7 +407,7 @@
     document.getElementById("rpl-close").setAttribute("aria-label", T("close"));
     sendBtn.setAttribute("aria-label", T("send"));
     input.placeholder = T("placeholder");
-    if (!humanBtn.disabled) humanBtn.textContent = "☎ " + T("human");
+    if (!humanBtn.disabled) humanBtn.innerHTML = humanLabel();
     else if (state.h) humanBtn.textContent = T("sent");
     var whos = msgs.querySelectorAll(".rpl-who");
     for (var i = 0; i < whos.length; i++) {
@@ -857,7 +868,7 @@
       markHumanSent();
     }).catch(function() {
       humanBtn.disabled = false;
-      humanBtn.textContent = "☎ " + T("human");
+      humanBtn.innerHTML = humanLabel();
     });
   };
 
