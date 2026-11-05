@@ -43,7 +43,7 @@ const fr = {
     placeholder: "Écrivez votre message…",
     online: "En ligne",
     product: { name: "Hoodie Nuage gris", price: "59 €", meta: "Taille M · En stock", add: "Ajouter au panier", added: "Ajouté au panier", media: "/media/hoodie", still: true } as Product,
-    sale: "Vente : +59 €",
+    sale: "Ajouté au panier : 59 €",
   },
   benefits: {
     eyebrow: "Ce que ça change",
@@ -182,7 +182,7 @@ const en: Copy = {
     placeholder: "Type your message…",
     online: "Online",
     product: { name: "Grey Nuage hoodie", price: "€59", meta: "Size M · In stock", add: "Add to cart", added: "Added to cart", media: "/media/hoodie", still: true },
-    sale: "Sale: +€59",
+    sale: "Added to cart: €59",
   },
   benefits: {
     eyebrow: "Why it matters",
