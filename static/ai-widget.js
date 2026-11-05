@@ -414,8 +414,11 @@
       whos[i].textContent = whos[i].parentNode.classList.contains("user") ? T("you") : botName();
     }
     // Si seul l'accueil a ete affiche, on le traduit aussi
-    if (lastLang && lastLang !== lang && state.m.length === 1 && state.m[0].w) {
-      state.m[0].t = welcomeText(); persist();
+    // (aussi au rechargement : l'accueil garde en memoire peut etre dans l'ancienne langue)
+    var w0 = state.m.length === 1 && state.m[0].w ? state.m[0] : null;
+    var wLang = w0 && (w0.l || (w0.t === TEXTS.en.welcome ? "en" : w0.t === TEXTS.fr.welcome ? "fr" : ""));
+    if (w0 && ((lastLang && lastLang !== lang) || (wLang && wLang !== lang))) {
+      w0.t = welcomeText(); w0.l = lang; persist();
       var b = msgs.querySelector(".rpl-msg.bot .rpl-bubble");
       if (b) { b.textContent = ""; renderBot(b, state.m[0].t); }
     }
@@ -696,7 +699,7 @@
     msgs.scrollTop = msgs.scrollHeight;
     if (remember !== false) {
       var entry = { r: role, t: text };
-      if (isWelcome) entry.w = 1;
+      if (isWelcome) { entry.w = 1; entry.l = uiLang(); }
       if (cards) entry.p = cards;
       state.m.push(entry); persist();
     }
