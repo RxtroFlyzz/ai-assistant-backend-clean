@@ -127,8 +127,10 @@ export default function LiveChat({
       await wait(250);
     };
 
+    // Joue la conversation une fois puis garde l'etat final a l'ecran :
+    // le visiteur peut relire. Elle rejoue quand le chat revient a l'ecran.
     const run = async () => {
-      while (alive) {
+      {
         // Le premier message du client est deja la : la fenetre n'est jamais vide.
         setShown(1);
         setTyping(false);
@@ -144,7 +146,7 @@ export default function LiveChat({
           const m = messages[i];
           if (m.from === "user") {
             const t = m.text;
-            const step = Math.max(16, Math.min(38, 1300 / t.length));
+            const step = Math.max(30, Math.min(55, 2200 / t.length));
             for (let k = 1; k <= t.length; k++) {
               setDraft(t.slice(0, k));
               await wait(step);
@@ -155,14 +157,14 @@ export default function LiveChat({
             setDraft("");
             setSending(false);
             setShown(i + 1);
-            await wait(900);
+            await wait(1300);
           } else {
             setTyping(true);
-            await wait(1700);
+            await wait(2000);
             setTyping(false);
             setShown(i + 1);
-            // Temps de lecture : environ 16 caracteres par seconde, plus le temps de regarder la fiche produit.
-            await wait(Math.max(2200, m.text.length * 60) + (i === productAt ? 1500 : 0));
+            // Temps de lecture : environ 12 caracteres par seconde, plus le temps de regarder la fiche produit.
+            await wait(Math.max(3000, m.text.length * 80) + (i === productAt ? 2500 : 0));
           }
           if (i === clickAfter) await click();
         }
@@ -172,9 +174,6 @@ export default function LiveChat({
           await wait(450);
         }
         setToast(true);
-        await wait(4500);
-        setFade(true);
-        await wait(550);
       }
     };
 
