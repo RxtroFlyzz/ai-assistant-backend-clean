@@ -79,7 +79,13 @@ export default function LiveChat({
   useEffect(() => {
     const el = body.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: shown <= 1 ? "auto" : "smooth" });
+    // On descend en bas, mais jamais au point de cacher le debut du dernier message :
+    // une longue reponse (avec fiche produit) reste lisible depuis sa premiere ligne.
+    const all = el.querySelectorAll<HTMLElement>("[data-msg]");
+    const last = all[all.length - 1];
+    const bottom = el.scrollHeight - el.clientHeight;
+    const top = last ? Math.min(bottom, last.offsetTop - 16) : bottom;
+    el.scrollTo({ top: Math.max(0, top), behavior: shown <= 1 ? "auto" : "smooth" });
   }, [shown, typing, showDone]);
 
   // Mouvement reduit : on affiche directement l'etat final, sans boucle.
@@ -149,13 +155,14 @@ export default function LiveChat({
             setDraft("");
             setSending(false);
             setShown(i + 1);
-            await wait(600);
+            await wait(900);
           } else {
             setTyping(true);
-            await wait(1150);
+            await wait(1700);
             setTyping(false);
             setShown(i + 1);
-            await wait(i === productAt ? 1200 : 950);
+            // Temps de lecture : environ 16 caracteres par seconde, plus le temps de regarder la fiche produit.
+            await wait(Math.max(2200, m.text.length * 60) + (i === productAt ? 1500 : 0));
           }
           if (i === clickAfter) await click();
         }
@@ -165,7 +172,7 @@ export default function LiveChat({
           await wait(450);
         }
         setToast(true);
-        await wait(3400);
+        await wait(4500);
         setFade(true);
         await wait(550);
       }
@@ -218,13 +225,14 @@ export default function LiveChat({
           ref={body}
           animate={{ opacity: fade ? 0 : 1 }}
           transition={{ duration: 0.45 }}
-          className="livechat-body flex flex-col justify-start gap-3 overflow-hidden px-4 py-5"
+          className="livechat-body relative flex flex-col justify-start gap-3 overflow-hidden px-4 py-5"
           style={{ height }}
         >
           <AnimatePresence initial={false}>
             {messages.slice(0, shown).map((m, i) => (
               <motion.div
                 key={i}
+                data-msg
                 layout
                 initial={{ opacity: 0, y: 16, scale: 0.94 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
