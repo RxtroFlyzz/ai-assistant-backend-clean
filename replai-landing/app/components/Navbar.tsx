@@ -49,18 +49,18 @@ export default function Navbar() {
       <nav className="mx-auto flex max-w-6xl items-center justify-between nav-shell rounded-full px-4 py-2.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl sm:px-5">
         <a href="#" aria-label="Replai"><Logo themed /></a>
 
-        <div className="hidden items-center gap-7 md:flex">
+        <div className="hidden items-center gap-7 lg:flex">
           {c.nav.links.map((l) => (
-            <a key={l.href} href={l.href} className="nav-link text-sm font-medium">
+            <a key={l.href} href={l.href} className="nav-link whitespace-nowrap text-sm font-medium">
               {l.label}
             </a>
           ))}
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="hidden md:block">{LangSwitch}</div>
-          <a href="#contact" className="btn-primary hidden px-4 py-2 text-sm md:inline-flex">{c.nav.cta}</a>
-          <button className="nav-ink p-2 md:hidden" onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open}>
+          <div className="hidden lg:block">{LangSwitch}</div>
+          <a href="#contact" className="btn-primary hidden whitespace-nowrap px-4 py-2 text-sm lg:inline-flex">{c.nav.cta}</a>
+          <button className="nav-ink p-2 lg:hidden" onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open}>
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               {open ? <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />}
             </svg>
@@ -74,7 +74,7 @@ export default function Navbar() {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="nav-shell mx-auto mt-2 max-w-6xl rounded-3xl p-4 shadow-lg backdrop-blur-xl md:hidden"
+            className="nav-shell mx-auto mt-2 max-w-6xl rounded-3xl p-4 shadow-lg backdrop-blur-xl lg:hidden"
           >
             <div className="flex flex-col">
               {c.nav.links.map((l) => (

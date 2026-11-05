@@ -8,6 +8,14 @@ import type { Product } from "../content";
 type Msg = { from: "user" | "bot"; text: string; link?: string; time?: string };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Tant qu'un chat de demo est a l'ecran, on masque les autres bulles
+// (accroche du vrai widget, bulle de la mascotte) pour ne pas les superposer.
+let demosVisible = 0;
+function markDemo(on: boolean) {
+  demosVisible = Math.max(0, demosVisible + (on ? 1 : -1));
+  document.body.classList.toggle("demo-visible", demosVisible > 0);
+}
 const spring = { type: "spring", stiffness: 420, damping: 30 } as const;
 
 // Widget de demo qui se joue en boucle : le client tape, l'assistant repond,
@@ -24,7 +32,7 @@ export default function LiveChat({
   done,
   dark = false,
   accent = "#111827",
-  height = 500,
+  height = 440,
 }: {
   brand: string;
   messages: Msg[];
@@ -42,7 +50,9 @@ export default function LiveChat({
   const reduced = useReducedMotion();
   const root = useRef<HTMLDivElement>(null);
   const btn = useRef<HTMLSpanElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const inView = useInView(root, { amount: 0.35 });
+  const near = useInView(root, { amount: 0.05 });
 
   const [shown, setShown] = useState(0);
   const [typing, setTyping] = useState(false);
@@ -58,6 +68,19 @@ export default function LiveChat({
   const bubble = dark ? "rgba(255,255,255,0.07)" : "#f3f4f6";
   const text = dark ? "#e2e8f0" : "#1f2937";
   const border = dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)";
+
+  useEffect(() => {
+    if (!near) return;
+    markDemo(true);
+    return () => markDemo(false);
+  }, [near]);
+
+  // Le fil se remplit par le haut et defile tout seul, comme un vrai chat.
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: shown <= 1 ? "auto" : "smooth" });
+  }, [shown, typing, showDone]);
 
   // Mouvement reduit : on affiche directement l'etat final, sans boucle.
   useEffect(() => {
@@ -100,7 +123,8 @@ export default function LiveChat({
 
     const run = async () => {
       while (alive) {
-        setShown(0);
+        // Le premier message du client est deja la : la fenetre n'est jamais vide.
+        setShown(1);
         setTyping(false);
         setDraft("");
         setAdded(false);
@@ -108,9 +132,9 @@ export default function LiveChat({
         setShowDone(false);
         setCursor((c) => ({ ...c, on: false, press: false }));
         setFade(false);
-        await wait(700);
+        await wait(500);
 
-        for (let i = 0; i < messages.length; i++) {
+        for (let i = 1; i < messages.length; i++) {
           const m = messages[i];
           if (m.from === "user") {
             const t = m.text;
@@ -191,9 +215,10 @@ export default function LiveChat({
         </div>
 
         <motion.div
+          ref={body}
           animate={{ opacity: fade ? 0 : 1 }}
           transition={{ duration: 0.45 }}
-          className="livechat-body flex flex-col justify-end gap-3 overflow-hidden px-4 py-5"
+          className="livechat-body flex flex-col justify-start gap-3 overflow-hidden px-4 py-5"
           style={{ height }}
         >
           <AnimatePresence initial={false}>
@@ -204,7 +229,7 @@ export default function LiveChat({
                 initial={{ opacity: 0, y: 16, scale: 0.94 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={spring}
-                className={`flex flex-col ${i === productAt ? "w-[86%]" : "max-w-[86%]"} ${
+                className={`flex shrink-0 flex-col ${i === productAt ? "w-[86%]" : "max-w-[86%]"} ${
                   m.from === "user" ? "self-end items-end" : "self-start items-start"
                 }`}
               >
@@ -281,7 +306,7 @@ export default function LiveChat({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={spring}
-                className="flex gap-1.5 self-start rounded-2xl px-4 py-3.5"
+                className="flex shrink-0 gap-1.5 self-start rounded-2xl px-4 py-3.5"
                 style={{ background: bubble, border: `1px solid ${border}`, borderBottomLeftRadius: 6 }}
               >
                 {[0, 1, 2].map((d) => (
@@ -297,7 +322,7 @@ export default function LiveChat({
                 initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={spring}
-                className="mx-auto mt-1 flex items-center gap-2 rounded-full bg-emerald-400/15 px-3 py-1.5 text-[12px] font-semibold text-emerald-500"
+                className="mx-auto mt-1 flex shrink-0 items-center gap-2 rounded-full bg-emerald-400/15 px-3 py-1.5 text-[12px] font-semibold text-emerald-500"
                 style={dark ? { color: "#6ee7b7" } : undefined}
               >
                 <Icon.check className="h-3.5 w-3.5" /> {done}

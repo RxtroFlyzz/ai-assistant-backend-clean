@@ -121,6 +121,9 @@ body {
 
 /* Widget de demo anime */
 .livechat-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px); mask-image: linear-gradient(to bottom, transparent 0, #000 28px); }
+/* Chat de demo a l'ecran : on cache les autres bulles pour eviter les superpositions */
+#rpl-teaser, .mascot-bubble { transition: opacity .3s ease; }
+body.demo-visible #rpl-teaser, body.demo-visible .mascot-bubble { opacity: 0 !important; pointer-events: none !important; }
 .livechat-caret { display: inline-block; width: 1.5px; height: 1em; margin-left: 2px; vertical-align: -2px; background: currentColor; animation: blink 1s steps(1) infinite; }
 
 /* Cartes vivantes : reflet qui passe, survol, icones qui flottent */

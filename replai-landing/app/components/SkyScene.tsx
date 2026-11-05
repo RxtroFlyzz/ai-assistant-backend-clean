@@ -56,7 +56,7 @@ function Cloud({ width }: { width: number }) {
 }
 
 function CloudLayer({ progress, reduced }: { progress: MotionValue<number>; reduced: boolean }) {
-  const opacity = useMapped(progress, [0, 0.4, 0.58, 0.75], [0.95, 0.85, 0.35, 0.08]);
+  const opacity = useMapped(progress, [0, 0.4, 0.5, 0.6], [0.95, 0.85, 0.25, 0.05]);
   return (
     <motion.div className="absolute inset-0" style={{ opacity }}>
       {CLOUDS.map((c, i) => (

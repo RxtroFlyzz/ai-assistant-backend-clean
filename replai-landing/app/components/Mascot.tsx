@@ -251,7 +251,7 @@ export default function Mascot() {
       >
         <Robot mood={mood} reduced={reduced} />
       </motion.div>
-      <div className="mb-16 hidden sm:block">
+      <div className="mascot-bubble mb-16 hidden sm:block">
         <Bubble mood={mood} />
       </div>
     </div>
