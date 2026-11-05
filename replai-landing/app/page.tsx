@@ -5,6 +5,7 @@ import SkyScene from "./components/SkyScene";
 import Mascot from "./components/Mascot";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
+import DemoVideo from "./components/DemoVideo";
 import Benefits from "./components/Benefits";
 import HowItWorks from "./components/HowItWorks";
 import Features from "./components/Features";
@@ -20,6 +21,7 @@ export default function Home() {
         <Navbar />
         <main>
           <Hero />
+          <DemoVideo />
           <Benefits />
           <HowItWorks />
           <Features />
