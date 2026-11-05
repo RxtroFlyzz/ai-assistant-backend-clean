@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useLang } from "../context/LangContext";
-import LiveChat from "./LiveChat";
+import { HeroChat } from "./LiveChat";
 import { Icon } from "./Icons";
 
 export default function Hero() {
@@ -82,14 +82,15 @@ export default function Hero() {
           <span className="absolute -top-3 right-5 z-10 rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-white">
             {c.heroChat.label}
           </span>
-          <LiveChat
+          <HeroChat
             brand={c.heroChat.brand}
-            messages={c.heroChat.messages}
+            intro={c.heroChat.messages}
+            chips={c.heroChat.chips}
+            hint={c.heroChat.hint}
+            replay={c.heroChat.replay}
             placeholder={c.heroChat.placeholder}
             online={c.heroChat.online}
             product={c.heroChat.product}
-            productAt={1}
-            clickAfter={1}
             sale={c.heroChat.sale}
             accent="#1f2937"
           />

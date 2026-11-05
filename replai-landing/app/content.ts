@@ -4,6 +4,7 @@ export const CONTACT_EMAIL = "contact@aireply.fr";
 export const BACKEND_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
 
 type Msg = { from: "user" | "bot"; text: string; link?: string; time?: string };
+type Chip = { q: string; a: string; add?: boolean };
 export type Product = { name: string; price: string; meta: string; add: string; added: string; media: string; still?: boolean };
 
 const fr = {
@@ -30,10 +31,15 @@ const fr = {
     label: "Exemple",
     messages: [
       { from: "user", text: "Bonjour, le hoodie gris taille comment ? Je fais 1m80." },
-      { from: "bot", text: "Il taille un peu grand : à 1m80, le M vous ira parfaitement. Il est en stock dans cette taille.", link: "Voir : Hoodie Nuage gris" },
-      { from: "user", text: "Et je le reçois quand ?" },
-      { from: "bot", text: "Commandé aujourd'hui, il part demain : livraison en 2 à 3 jours, offerte dès 50 €." },
+      { from: "bot", text: "Il taille un peu grand : à 1m80, le M vous ira parfaitement. Il est en stock dans cette taille." },
     ] as Msg[],
+    chips: [
+      { q: "Je le reçois quand ?", a: "Commandé aujourd'hui, il part demain : livraison en 2 à 3 jours, offerte dès 50 €." },
+      { q: "Et si la taille ne va pas ?", a: "Aucun souci : l'échange de taille est gratuit pendant 30 jours." },
+      { q: "Je le prends en M !", a: "C'est fait, le hoodie en M est dans votre panier. Bonne journée !", add: true },
+    ] as Chip[],
+    hint: "À vous : cliquez sur une question",
+    replay: "Rejouer",
     placeholder: "Écrivez votre message…",
     online: "En ligne",
     product: { name: "Hoodie Nuage gris", price: "59 €", meta: "Taille M · En stock", add: "Ajouter au panier", added: "Ajouté au panier", media: "/media/hoodie", still: true } as Product,
@@ -79,6 +85,7 @@ const fr = {
       { from: "user", text: "Parfait, je finalise.", time: "02:48" },
     ] as Msg[],
     done: "Commande passée à 02:49",
+    hint: "Un client arrive sur votre boutique. Faites défiler.",
     product: { name: "Veste Nuage marine", price: "89 €", meta: "Taille M · Livraison Belgique", add: "Finaliser la commande", added: "Commande validée", media: "/media/veste", still: true } as Product,
     sale: "+89 € pendant que vous dormiez",
   },
@@ -163,10 +170,15 @@ const en: Copy = {
     label: "Example",
     messages: [
       { from: "user", text: "Hi, how does the grey hoodie fit? I'm 1.80 m." },
-      { from: "bot", text: "It runs slightly large: at 1.80 m, a M will fit you perfectly. It's in stock in that size.", link: "View: Grey Nuage hoodie" },
-      { from: "user", text: "When would I get it?" },
-      { from: "bot", text: "Order today and it ships tomorrow: delivery in 2 to 3 days, free over €50." },
+      { from: "bot", text: "It runs slightly large: at 1.80 m, a M will fit you perfectly. It's in stock in that size." },
     ],
+    chips: [
+      { q: "When would I get it?", a: "Order today and it ships tomorrow: delivery in 2 to 3 days, free over €50." },
+      { q: "What if the size is wrong?", a: "No problem: size exchanges are free for 30 days." },
+      { q: "I'll take it in M!", a: "Done, the hoodie in M is in your cart. Have a great day!", add: true },
+    ],
+    hint: "Your turn: tap a question",
+    replay: "Replay",
     placeholder: "Type your message…",
     online: "Online",
     product: { name: "Grey Nuage hoodie", price: "€59", meta: "Size M · In stock", add: "Add to cart", added: "Added to cart", media: "/media/hoodie", still: true },
@@ -212,6 +224,7 @@ const en: Copy = {
       { from: "user", text: "Perfect, checking out.", time: "02:48" },
     ],
     done: "Order placed at 02:49",
+    hint: "A customer lands on your store. Keep scrolling.",
     product: { name: "Navy Nuage jacket", price: "€89", meta: "Size M · Ships to Belgium", add: "Complete order", added: "Order confirmed", media: "/media/veste", still: true },
     sale: "+€89 while you slept",
   },

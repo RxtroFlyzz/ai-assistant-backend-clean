@@ -121,6 +121,9 @@ body {
 
 /* Widget de demo anime */
 .livechat-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px); mask-image: linear-gradient(to bottom, transparent 0, #000 28px); }
+@media (max-width: 639px) { .night-head p.ink-soft { display: none; } }
+.scroll-cue { animation: cue 1.6s ease-in-out infinite; }
+@keyframes cue { 0%, 100% { transform: translateY(0); opacity: .6; } 50% { transform: translateY(5px); opacity: 1; } }
 /* Chat de demo a l'ecran : on cache les autres bulles pour eviter les superpositions */
 #rpl-teaser, .mascot-bubble { transition: opacity .3s ease; }
 body.demo-visible #rpl-teaser, body.demo-visible .mascot-bubble { opacity: 0 !important; pointer-events: none !important; }
