@@ -2184,4 +2184,15 @@ def cards_from_picks(picks: list, catalog: dict) -> list:
     return cards
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+class RevalidatedStatic(StaticFiles):
+    """Fichiers statiques que le navigateur doit revalider a chaque chargement :
+    une mise a jour du widget arrive tout de suite chez les clients (reponse 304
+    tres legere si rien n'a change), au lieu de rester en cache plusieurs jours."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedStatic(directory="static"), name="static")
