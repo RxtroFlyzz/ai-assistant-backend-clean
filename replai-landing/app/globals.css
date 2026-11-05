@@ -118,6 +118,46 @@ body {
   .cloud-drift, .star-twinkle, .typing-dot { animation: none !important; }
 }
 
+
+/* Widget de demo anime */
+.livechat-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px); mask-image: linear-gradient(to bottom, transparent 0, #000 28px); }
+.livechat-caret { display: inline-block; width: 1.5px; height: 1em; margin-left: 2px; vertical-align: -2px; background: currentColor; animation: blink 1s steps(1) infinite; }
+
+/* Cartes vivantes : reflet qui passe, survol, icones qui flottent */
+.card-live { position: relative; overflow: hidden; transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s; }
+.card-live:hover { transform: translateY(-6px); box-shadow: 0 26px 50px -24px rgba(79, 70, 229, 0.45); }
+.card-live::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.28) 50%, transparent 65%);
+  transform: translateX(-130%); animation: card-sheen 8s ease-in-out infinite; animation-delay: var(--d, 0s);
+}
+@keyframes card-sheen { 0%, 72% { transform: translateX(-130%); } 88%, 100% { transform: translateX(130%); } }
+
+@keyframes icon-bob { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-4px) rotate(-4deg); } }
+.icon-bob { animation: icon-bob 4.5s ease-in-out infinite; animation-delay: var(--d, 0s); }
+
+.icon-ping { isolation: isolate; }
+.icon-ping::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: #6366f1;
+  animation: ping-soft 3.6s cubic-bezier(0, 0, 0.2, 1) infinite; animation-delay: var(--d, 0s);
+}
+@keyframes ping-soft { 0% { transform: scale(1); opacity: 0.55; } 60%, 100% { transform: scale(1.9); opacity: 0; } }
+
+/* Mise en route : les etapes se remplissent l'une apres l'autre */
+.step-bar { display: block; height: 4px; margin-bottom: 22px; border-radius: 9999px; overflow: hidden; background: var(--surface-border); }
+.step-bar i { display: block; height: 100%; width: 100%; transform-origin: left; transform: scaleX(0); background: linear-gradient(90deg, #4f46e5, #a5b4fc); }
+.step-bar-1 i { animation: step-1 9s ease-in-out infinite; }
+.step-bar-2 i { animation: step-2 9s ease-in-out infinite; }
+.step-bar-3 i { animation: step-3 9s ease-in-out infinite; }
+@keyframes step-1 { 0% { transform: scaleX(0); opacity: 1; } 15% { transform: scaleX(1); } 86% { transform: scaleX(1); opacity: 1; } 94%, 100% { transform: scaleX(1); opacity: 0; } }
+@keyframes step-2 { 0%, 22% { transform: scaleX(0); opacity: 1; } 37% { transform: scaleX(1); } 86% { transform: scaleX(1); opacity: 1; } 94%, 100% { transform: scaleX(1); opacity: 0; } }
+@keyframes step-3 { 0%, 44% { transform: scaleX(0); opacity: 1; } 59% { transform: scaleX(1); } 86% { transform: scaleX(1); opacity: 1; } 94%, 100% { transform: scaleX(1); opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .card-live::after, .icon-bob, .icon-ping::before, .step-bar i, .livechat-caret { animation: none !important; }
+  .step-bar i { transform: scaleX(1); }
+}
+
 @layer utilities {
   .text-balance { text-wrap: balance; }
 }

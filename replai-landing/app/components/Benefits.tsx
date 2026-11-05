@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useLang } from "../context/LangContext";
 import { Icon } from "./Icons";
 import { Reveal, SectionHead } from "./Section";
@@ -17,8 +18,8 @@ export default function Benefits() {
             const I = ICONS[i];
             return (
               <Reveal key={b.title} delay={i * 0.1}>
-                <div className="surface h-full rounded-3xl p-8 shadow-sm">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-600/25">
+                <div className="surface card-live h-full rounded-3xl p-8 shadow-sm" style={{ "--d": `${i * 1.2}s` } as CSSProperties}>
+                  <div className="icon-ping icon-bob relative flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-600/25">
                     <I className="h-5 w-5" />
                   </div>
                   <h3 className="ink mt-6 font-display text-xl font-semibold">{b.title}</h3>

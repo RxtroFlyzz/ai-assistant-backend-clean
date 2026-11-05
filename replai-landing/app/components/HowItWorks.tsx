@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useLang } from "../context/LangContext";
 import { Reveal, SectionHead } from "./Section";
 
@@ -12,7 +13,8 @@ export default function HowItWorks() {
         <ol className="relative mt-16 grid gap-5 md:grid-cols-3">
           {c.how.steps.map((s, i) => (
             <Reveal key={s.title} delay={i * 0.12}>
-              <li className="surface h-full list-none rounded-3xl p-8">
+              <li className="surface card-live h-full list-none rounded-3xl p-8" style={{ "--d": `${i * 1.5}s` } as CSSProperties}>
+                <span className={`step-bar step-bar-${i + 1}`}><i /></span>
                 <span className="accent-ink font-display text-sm font-semibold tracking-widest">0{i + 1}</span>
                 <h3 className="ink mt-4 font-display text-xl font-semibold">{s.title}</h3>
                 <p className="ink-soft mt-3 leading-relaxed">{s.text}</p>

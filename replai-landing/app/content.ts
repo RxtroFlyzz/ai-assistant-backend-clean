@@ -4,6 +4,7 @@ export const CONTACT_EMAIL = "contact@aireply.fr";
 export const BACKEND_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
 
 type Msg = { from: "user" | "bot"; text: string; link?: string; time?: string };
+export type Product = { name: string; price: string; meta: string; add: string; added: string; media: string; still?: boolean };
 
 const fr = {
   nav: {
@@ -35,6 +36,8 @@ const fr = {
     ] as Msg[],
     placeholder: "Écrivez votre message…",
     online: "En ligne",
+    product: { name: "Hoodie Nuage gris", price: "59 €", meta: "Taille M · En stock", add: "Ajouter au panier", added: "Ajouté au panier", media: "/media/hoodie" } as Product,
+    sale: "Vente : +59 €",
   },
   benefits: {
     eyebrow: "Ce que ça change",
@@ -76,6 +79,8 @@ const fr = {
       { from: "user", text: "Parfait, je finalise.", time: "02:48" },
     ] as Msg[],
     done: "Commande passée à 02:49",
+    product: { name: "Veste Nuage marine", price: "89 €", meta: "Taille M · Livraison Belgique", add: "Finaliser la commande", added: "Commande validée", media: "/media/veste", still: true } as Product,
+    sale: "+89 € pendant que vous dormiez",
   },
   pricing: {
     eyebrow: "Tarifs",
@@ -164,6 +169,8 @@ const en: Copy = {
     ],
     placeholder: "Type your message…",
     online: "Online",
+    product: { name: "Grey Nuage hoodie", price: "€59", meta: "Size M · In stock", add: "Add to cart", added: "Added to cart", media: "/media/hoodie" },
+    sale: "Sale: +€59",
   },
   benefits: {
     eyebrow: "Why it matters",
@@ -205,6 +212,8 @@ const en: Copy = {
       { from: "user", text: "Perfect, checking out.", time: "02:48" },
     ],
     done: "Order placed at 02:49",
+    product: { name: "Navy Nuage jacket", price: "€89", meta: "Size M · Ships to Belgium", add: "Complete order", added: "Order confirmed", media: "/media/veste", still: true },
+    sale: "+€89 while you slept",
   },
   pricing: {
     eyebrow: "Pricing",
