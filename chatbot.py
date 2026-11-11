@@ -40,6 +40,12 @@ CHAT_MODEL = os.getenv("REPLAI_CHAT_MODEL", "gpt-6-luna")
 UTIL_MODEL = os.getenv("REPLAI_UTIL_MODEL", "gpt-6-luna")
 
 
+# Expediteur des emails (notifications, rapports, demandes de demo). Le domaine doit
+# etre verifie chez Resend. Les reponses des clients arrivent sur l'adresse de contact.
+MAIL_FROM = os.getenv("MAIL_FROM", "Replai <noreply@aireply.fr>")
+MAIL_REPLY_TO = os.getenv("MAIL_REPLY_TO", "contact@aireply.fr")
+
+
 def llm_params(model: str, max_tokens: int = None) -> dict:
     """Parametres compatibles avec le modele : les modeles recents raisonnent
     (on coupe le raisonnement : reponse plus rapide, inutile pour du service client)
@@ -338,7 +344,7 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
         return
     try:
         params = {
-            "from": "Replai <noreply@gianluca-ai.fr>",
+            "from": MAIL_FROM,
             "to": [client_obj.client_email],
             "subject": "Nouveau client a rappeler - " + client_obj.business_name,
             "html": (
@@ -1665,7 +1671,7 @@ def demo_request(req: DemoRequest, request: Request, db: Session = Depends(get_d
             rows = [("Boutique", shop), ("Email", email), ("Prénom", name), ("Téléphone", phone),
                     ("Langue du site", (req.lang or "")[:5])]
             resend.Emails.send({
-                "from": "Replai <noreply@gianluca-ai.fr>",
+                "from": MAIL_FROM,
                 "to": [c.client_email],
                 "reply_to": email,
                 "subject": "Nouvelle demande de démo - " + re.sub(r"^https?://(www\.)?", "", shop)[:80],
@@ -2003,7 +2009,8 @@ def send_monthly_report(c: Client, year: int, month: int, db: Session, force: bo
         subject += ", " + _eur(v["revenue"]) + " de ventes"
     try:
         resend.Emails.send({
-            "from": "Replai <noreply@gianluca-ai.fr>",
+            "from": MAIL_FROM,
+            "reply_to": MAIL_REPLY_TO,
             "to": [c.client_email],
             "subject": subject,
             "html": report_email_html(brand["name"], label, s,
