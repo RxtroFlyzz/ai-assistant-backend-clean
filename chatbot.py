@@ -34,9 +34,10 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Modeles OpenAI. GPT-4.1 mini est retire le 14 janvier 2027 : on passe a GPT-6 Luna,
 # teste sur les vraies questions de Dreamer (aussi juste, plus naturel, ~4 fois moins cher).
-# Changeable sur Render sans toucher au code (variables CHAT_MODEL et UTIL_MODEL).
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-6-luna")
-UTIL_MODEL = os.getenv("UTIL_MODEL", "gpt-6-luna")
+# Changeable sur Render sans toucher au code (variables REPLAI_CHAT_MODEL et REPLAI_UTIL_MODEL ;
+# nouveaux noms expres, pour qu'une ancienne variable CHAT_MODEL ne force pas un modele retire).
+CHAT_MODEL = os.getenv("REPLAI_CHAT_MODEL", "gpt-6-luna")
+UTIL_MODEL = os.getenv("REPLAI_UTIL_MODEL", "gpt-6-luna")
 
 
 def llm_params(model: str, max_tokens: int = None) -> dict:
