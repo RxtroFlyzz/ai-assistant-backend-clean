@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import uuid
+import threading
 import os
 import re
 import time
@@ -349,7 +350,7 @@ def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
 # Shopify expose publiquement /products.json, WooCommerce /wp-json/wc/store/v1/products
 # (sans cle API). On lit le catalogue, on le normalise dans un format commun
 # (fiches produit du chat + texte pour le prompt) et on le met en cache.
-CATALOG_TTL = 1800          # secondes (30 min)
+CATALOG_TTL = 300           # secondes (5 min) : au-dela, on rafraichit en arriere-plan
 CATALOG_MAX_CHARS = 40000   # ~10k tokens : ~150 produits avec description courte
 CATALOG_CACHE = {}          # shop_url -> (timestamp, {"platform", "products", "text"})
 EMPTY_CATALOG = {"platform": "", "products": [], "text": ""}
@@ -606,15 +607,41 @@ def _fetch_woocommerce(shop_url: str) -> list:
     return normalize_woocommerce(products, shop_url)
 
 
+_REFRESHING = set()
+
+
+def _refresh_later(key, fn):
+    """Lance fn() dans un thread, une seule fois a la fois par cle : le visiteur
+    recoit tout de suite la version en cache, la suivante sera a jour."""
+    if key in _REFRESHING:
+        return
+    _REFRESHING.add(key)
+
+    def run():
+        try:
+            fn()
+        finally:
+            _REFRESHING.discard(key)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def get_catalog(shop_url: str) -> dict:
-    """Catalogue normalise, avec cache. En cas d'erreur, renvoie la derniere
-    version connue (ou un catalogue vide) : le chat ne doit jamais planter a cause de la boutique."""
+    """Catalogue normalise, avec cache. Une version de plus de 5 min est servie
+    une derniere fois pendant qu'on la relit en arriere-plan (le visiteur n'attend pas).
+    En cas d'erreur, renvoie la derniere version connue (ou un catalogue vide)."""
     if not shop_url:
         return EMPTY_CATALOG
+    cached = CATALOG_CACHE.get(shop_url)
+    if cached:
+        if time.time() - cached[0] >= CATALOG_TTL:
+            _refresh_later(("catalog", shop_url), lambda: _load_catalog(shop_url))
+        return cached[1]
+    return _load_catalog(shop_url)
+
+
+def _load_catalog(shop_url: str) -> dict:
     now = time.time()
     cached = CATALOG_CACHE.get(shop_url)
-    if cached and now - cached[0] < CATALOG_TTL:
-        return cached[1]
     order = ["woocommerce", "shopify"] if cached and cached[1].get("platform") == "woocommerce" else ["shopify", "woocommerce"]
     errors = []
     for platform in order:
@@ -689,6 +716,51 @@ def size_shift(diff_cm: int) -> int:
     d = abs(diff_cm)
     step = 0 if d < 8 else (d + 2) // 8
     return step if diff_cm > 0 else -step
+
+
+SIZE_ASKED_WORD_RE = re.compile(
+    r"(?i)\b(?:taille|size|talla|taglia|gr[oö](?:ss|ß)e|maat|tamanho|rozmiar)\s*(?:en\s+|in\s+)?"
+    r"(xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl)\b")
+SIZE_ASKED_CAPS_RE = re.compile(r"(?<![\w'’])(XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL)(?![\w'’])")
+
+
+def sizes_asked(message: str) -> list:
+    """Tailles de vetement citees dans le message du visiteur ("taille L", "size m", "en XL")."""
+    found = [m.group(1).upper() for m in SIZE_ASKED_WORD_RE.finditer(message or "")]
+    found += SIZE_ASKED_CAPS_RE.findall(message or "")
+    norm = {"2XL": "XXL", "3XL": "XXXL"}
+    out = []
+    for x in found:
+        x = norm.get(x, x)
+        if x not in out:
+            out.append(x)
+    return out[:3]
+
+
+def size_availability(catalog: dict, sizes: list) -> list:
+    """Pour chaque taille demandee : produits ou elle est disponible / epuisee,
+    lus directement dans le stock (l'IA se trompait en lisant le catalogue)."""
+    lines = []
+    for size in sizes:
+        ok, ko = [], []
+        for p in catalog.get("products", []):
+            idx = next((i for i, o in enumerate(p["options"]) if SIZE_OPTION_RE.search(o["name"])), None)
+            if idx is None:
+                continue
+            values = [str(v).upper() for v in p["options"][idx]["values"]]
+            if size not in values:
+                continue
+            avail = _uniq(str(v["options"][idx]).upper() for v in p["variants"]
+                          if v["available"] and len(v["options"]) > idx)
+            if size in avail:
+                ok.append(p["title"])
+            else:
+                ko.append("%s (dispo : %s)" % (p["title"], ", ".join(avail) if avail else "rien, tout est epuise"))
+        if ok or ko:
+            lines.append("TAILLE %s DISPONIBLE pour : %s" % (size, ", ".join(ok[:40]) if ok else "aucun produit"))
+            if ko:
+                lines.append("TAILLE %s EPUISEE pour : %s" % (size, " ; ".join(ko[:40])))
+    return lines
 
 
 def size_estimates(catalog: dict, height: int) -> list:
@@ -792,7 +864,7 @@ def product_cards(reply: str, catalog: dict, limit: int = 3) -> list:
 # Le catalogue ne dit rien de la newsletter, des reseaux sociaux ou des
 # conditions de livraison : on lit la page d'accueil et les pages de conditions
 # Shopify, avec un cache long (ces infos changent rarement).
-SITE_INFO_TTL = 6 * 3600
+SITE_INFO_TTL = 3600        # 1 h : au-dela, on relit le site en arriere-plan
 SITE_INFO_CACHE = {}        # shop_url -> (timestamp, texte)
 SOCIAL_RE = re.compile(r"href=[\"'](https?://(?:www\.)?(instagram\.com|tiktok\.com|facebook\.com|youtube\.com|x\.com|twitter\.com|pinterest\.[a-z.]+)/[^\"'?#]*)", re.I)
 POLICY_PAGES = [("Livraison", "/policies/shipping-policy"), ("Retours et remboursements", "/policies/refund-policy")]
@@ -843,7 +915,8 @@ def build_site_info(shop_url: str) -> str:
                 socials.append(url.rstrip("/"))
         banner = re.search(r"(?is)<(?:div|section|aside)[^>]*announcement[^>]*>(.*?)</(?:div|section|aside)>", home)
         if banner and html_to_text(banner.group(1)):
-            parts.append("BANDEAU DU SITE : " + html_to_text(banner.group(1))[:300])
+            parts.append("BANDEAU PUBLICITAIRE DU SITE (moins fiable que les conditions officielles) : "
+                         + html_to_text(banner.group(1))[:300])
         body, foot = main_content(home), footer_content(home)
         parts.append("PAGE D'ACCUEIL (extrait) : " + (body[:1800] + (" (...)" if len(body) > 1800 else "")))
         if foot:
@@ -854,13 +927,15 @@ def build_site_info(shop_url: str) -> str:
             parts.append("RESEAUX SOCIAUX : " + ", ".join(socials[:6]))
     except Exception as e:
         print("SITE INFO HOME ERROR:", shop_url, e)
+    policies = []
     for label, path in POLICY_PAGES:
         try:
             t = main_content(_fetch(shop_url + path))
             if len(t) > 40:
-                parts.append(label.upper() + " (conditions officielles) : " + t[:2000])
+                policies.append(label.upper() + " (conditions officielles) : " + t[:2000])
         except Exception:
             pass
+    parts = policies + parts      # les conditions officielles d'abord
     guide = size_guide_text(shop_url, home)
     if guide:
         parts.append("GUIDE DES TAILLES DE LA BOUTIQUE : " + guide)
@@ -887,10 +962,17 @@ def size_guide_text(shop_url: str, home: str) -> str:
 def get_site_info(shop_url: str) -> str:
     if not shop_url:
         return ""
+    cached = SITE_INFO_CACHE.get(shop_url)
+    if cached:
+        if time.time() - cached[0] >= SITE_INFO_TTL:
+            _refresh_later(("site", shop_url), lambda: _load_site_info(shop_url))
+        return cached[1]
+    return _load_site_info(shop_url)
+
+
+def _load_site_info(shop_url: str) -> str:
     now = time.time()
     cached = SITE_INFO_CACHE.get(shop_url)
-    if cached and now - cached[0] < SITE_INFO_TTL:
-        return cached[1]
     info = build_site_info(shop_url)
     if info:
         SITE_INFO_CACHE[shop_url] = (now, info)
@@ -2072,7 +2154,10 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             base_prompt += (
                 "\n\nINFOS DU SITE DE LA BOUTIQUE (newsletter, reseaux, livraison, retours). "
                 "Utilise-les pour repondre ; si la premiere partie de ce prompt les contredit, "
-                "c'est la premiere partie qui a raison :\n" + site_info
+                "c'est la premiere partie qui a raison. LIVRAISON ET RETOURS : pays livres, delais, frais et seuil "
+                "de livraison offerte viennent UNIQUEMENT des conditions officielles ci-dessous, dans toutes les "
+                "langues. Si le bandeau ou la page d'accueil disent autre chose (ex : 'worldwide', un autre montant), "
+                "ignore-les et suis les conditions officielles. Un pays absent des conditions n'est pas livre :\n" + site_info
             )
 
     # Le texte de la page n'est utile que si le visiteur est sur le site du client
@@ -2091,6 +2176,14 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "\n\nTAILLE CONSEILLEE POUR CE VISITEUR (%d cm), deja calculee produit par produit a partir du mannequin "
             "et du stock. Reprends-la telle quelle pour le produit concerne (ajuste d'une taille seulement si le "
             "visiteur parle de sa corpulence ou prefere ajuste/ample) :\n" % height + "\n".join(estimates)
+        )
+    asked = sizes_asked(msg.message) if shop_mode else []
+    availability = size_availability(catalog, asked) if asked else []
+    if availability:
+        base_prompt += (
+            "\n\nDISPONIBILITE VERIFIEE DANS LE STOCK EN TEMPS REEL pour la taille demandee. C'est la seule source "
+            "a utiliser : ne dis jamais qu'une taille est disponible pour un produit de la liste EPUISEE :\n"
+            + "\n".join(availability)
         )
     base_prompt += build_reply_rules(shop_mode)
 
