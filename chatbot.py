@@ -135,6 +135,13 @@ KNOWN_LANGS = {"fr", "en", "es", "it", "de", "pt", "nl", "ar", "zh", "ja", "ru",
                "sv", "da", "no", "fi", "cs", "el", "he", "ko", "uk", "hu", "vi", "th", "id", "hi"}
 
 
+REPLY_LANG_NAMES = {
+    "fr": "francais", "en": "anglais (English)", "it": "italien (italiano)", "es": "espagnol (espanol)",
+    "de": "allemand (Deutsch)", "nl": "neerlandais (Nederlands)", "pt": "portugais (portugues)",
+    "ar": "arabe", "zh": "chinois", "ja": "japonais", "ru": "russe", "pl": "polonais", "tr": "turc", "ro": "roumain",
+}
+
+
 def page_lang_hint(value) -> str:
     """Langue de la page ou se trouve le widget (attribut lang du site)."""
     code = (value or "").strip().lower()[:2]
@@ -2090,6 +2097,17 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
         messages_for_openai.append({"role": m.role, "content": m.content})
+
+    # Langue de la reponse, rappelee en tout dernier : le prompt et le catalogue sont
+    # en francais, et sans ce rappel l'IA repondait en francais a "are there any discounts".
+    reply_lang = detect_visitor_language(visitor_msgs, page_lang)
+    lang_name = REPLY_LANG_NAMES.get(reply_lang, reply_lang)
+    messages_for_openai.append({"role": "system", "content": (
+        "LANGUE DE LA REPONSE : %s. Le visiteur ecrit en %s : redige tout le champ \"message\" en %s, "
+        "meme si tes instructions, le catalogue et tes messages precedents sont en francais. "
+        "Garde les noms de produits tels quels. Si le visiteur demande une autre langue, utilise celle-la."
+        % (lang_name, lang_name, lang_name)
+    )})
 
     reply, picks = ask_assistant(messages_for_openai, shop_mode)
 
