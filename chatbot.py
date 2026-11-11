@@ -31,6 +31,24 @@ from models import Base, Client, Conversation, Message as MessageModel, Event, R
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Modeles OpenAI. GPT-4.1 mini est retire le 14 janvier 2027 : on passe a GPT-6 Luna,
+# teste sur les vraies questions de Dreamer (aussi juste, plus naturel, ~4 fois moins cher).
+# Changeable sur Render sans toucher au code (variables CHAT_MODEL et UTIL_MODEL).
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-6-luna")
+UTIL_MODEL = os.getenv("UTIL_MODEL", "gpt-6-luna")
+
+
+def llm_params(model: str, max_tokens: int = None) -> dict:
+    """Parametres compatibles avec le modele : les modeles recents raisonnent
+    (on coupe le raisonnement : reponse plus rapide, inutile pour du service client)
+    et attendent max_completion_tokens au lieu de max_tokens."""
+    if model.startswith(("gpt-4", "gpt-3")):
+        return {"model": model, **({"max_tokens": max_tokens} if max_tokens else {})}
+    params = {"model": model, "reasoning_effort": "none"}
+    if max_tokens:
+        params["max_completion_tokens"] = max_tokens
+    return params
 resend.api_key = os.getenv("RESEND_API_KEY")
 SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "superadmin123")
 
@@ -168,8 +186,7 @@ def detect_visitor_language(visitor_messages: list, default: str = "fr") -> str:
         return default
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            max_tokens=5,
+            **llm_params(UTIL_MODEL, 5),
             messages=[
                 {"role": "system", "content": (
                     "You identify the language a website visitor writes in. "
@@ -197,8 +214,7 @@ def translate_to_visitor_language(canonical_msg: str, visitor_messages: list, pa
         return canonical_msg
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            max_tokens=150,
+            **llm_params(UTIL_MODEL, 150),
             messages=[
                 {"role": "system", "content": (
                     "Translate the following French customer-service message into the language whose "
@@ -236,8 +252,7 @@ def classify_reply(visitor_message: str, step: str) -> str:
         return "NO"
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            max_tokens=5,
+            **llm_params(UTIL_MODEL, 5),
             messages=[
                 {"role": "system", "content": (
                     CLASSIFY_CONTEXT.get(step, CLASSIFY_CONTEXT["proposal"]) + " "
@@ -1475,8 +1490,7 @@ def question_topics(token: str, days: int, questions: list) -> list:
     sample = questions[:150]
     try:
         response = client.with_options(timeout=20, max_retries=1).chat.completions.create(
-            model="gpt-4.1-mini",
-            max_tokens=500,
+            **llm_params(UTIL_MODEL, 500),
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": (
@@ -1809,8 +1823,7 @@ def product_teaser(shop: str, p: dict, lang: str) -> str:
     text = ""
     try:
         r = client.with_options(timeout=8, max_retries=0).chat.completions.create(
-            model="gpt-4.1-mini",
-            max_tokens=60,
+            **llm_params(UTIL_MODEL, 60),
             messages=[
                 {"role": "system", "content": (
                     "Tu ecris la petite bulle qui s'affiche a cote du chat d'une boutique en ligne quand un visiteur "
@@ -2212,7 +2225,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     return bot_reply(clean_card_links(reply, cards), conv_id, False, cards)
 
 
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4.1-mini")
 
 REPLY_RULES = """
 
@@ -2258,7 +2270,7 @@ def build_reply_rules(shop_mode: bool) -> str:
 def ask_assistant(messages: list, shop_mode: bool):
     """Renvoie (texte du message, produits choisis). Si le JSON est illisible, on garde le texte brut."""
     response = client.chat.completions.create(
-        model=CHAT_MODEL,
+        **llm_params(CHAT_MODEL),
         messages=messages,
         response_format={"type": "json_object"},
         temperature=0.4,
