@@ -10,7 +10,7 @@ export default function ReplaiWidget() {
   if (pathname?.startsWith("/demo")) return null;
   return (
     <Script
-      src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=replai_cb23fd"
+      src="https://api.aireply.fr/static/ai-widget.js?token=replai_cb23fd"
       strategy="afterInteractive"
     />
   );

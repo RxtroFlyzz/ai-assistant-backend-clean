@@ -6,7 +6,7 @@ import Script from "next/script";
 // Elle charge le widget du prospect (avec son vrai catalogue) a la place de
 // celui de Replai, et n'est pas indexee par Google.
 
-const WIDGET_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js";
+const WIDGET_URL = "https://api.aireply.fr/static/ai-widget.js";
 const TOKEN_RE = /^[A-Za-z0-9_-]{3,80}$/;
 
 type Props = { searchParams: { token?: string; name?: string } };

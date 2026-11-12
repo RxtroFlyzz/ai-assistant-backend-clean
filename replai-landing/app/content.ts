@@ -1,7 +1,7 @@
 // Tous les textes du site, en francais et en anglais.
 
 export const CONTACT_EMAIL = "contact@aireply.fr";
-export const BACKEND_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
+export const BACKEND_URL = "https://api.aireply.fr";
 
 type Msg = { from: "user" | "bot"; text: string; link?: string; time?: string };
 type Chip = { q: string; a: string; add?: boolean };

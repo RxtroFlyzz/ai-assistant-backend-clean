@@ -10,7 +10,12 @@
   var urlParams = new URLSearchParams(scriptSrc.split("?")[1] || "");
   var CLIENT_TOKEN = (typeof WIDGET_TOKEN !== "undefined" ? WIDGET_TOKEN : "") || urlParams.get("token") || "";
 
-  var BASE_URL = "https://ai-assistant-backend-clean-iz6y.onrender.com";
+  // Le widget parle au serveur d'ou il a ete charge (ancienne ou nouvelle adresse).
+  var BASE_URL = "https://api.aireply.fr";
+  try {
+    var scriptOrigin = new URL(scriptTag.src).origin;
+    if (/^https:\/\/(api\.aireply\.fr|ai-assistant-backend-clean-iz6y\.onrender\.com)$/.test(scriptOrigin)) BASE_URL = scriptOrigin;
+  } catch (e) {}
   var API_URL = BASE_URL + "/chat";
   var CONTACT_URL = BASE_URL + "/contact-human";
   var CONFIG_URL = BASE_URL + "/widget-config?token=" + encodeURIComponent(CLIENT_TOKEN);

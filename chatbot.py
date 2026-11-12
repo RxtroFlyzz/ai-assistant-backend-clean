@@ -1215,7 +1215,7 @@ def create_client(req: CreateClientRequest, db: Session = Depends(get_db)):
         "business_name": req.business_name,
         "shop_url": normalize_shop_url(req.shop_url or "") or None,
         "admin_url": "/admin?token=" + token,
-        "widget_script": '<script src="https://ai-assistant-backend-clean-iz6y.onrender.com/static/ai-widget.js?token=' + token + '"></script>'
+        "widget_script": '<script src="' + PUBLIC_BASE_URL + '/static/ai-widget.js?token=' + token + '"></script>'
     }
 
 
@@ -1779,7 +1779,7 @@ analytics.subscribe("checkout_completed", (event) => {
   });
 });
 """
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://ai-assistant-backend-clean-iz6y.onrender.com")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://api.aireply.fr")
 
 
 @app.get("/superadmin/pixel-code")
