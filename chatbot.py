@@ -54,7 +54,10 @@ def llm_params(model: str, max_tokens: int = None) -> dict:
         return {"model": model, **({"max_tokens": max_tokens} if max_tokens else {})}
     params = {"model": model, "reasoning_effort": "none"}
     if max_tokens:
-        params["max_completion_tokens"] = max_tokens
+        # Marge de securite : ces modeles consomment parfois quelques jetons invisibles avant
+        # de repondre. Avec une limite a 5, une detection de langue sur six echouait (erreur
+        # 400 "max_tokens reached") et retombait sur le francais.
+        params["max_completion_tokens"] = max_tokens + 40
     return params
 resend.api_key = os.getenv("RESEND_API_KEY")
 SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "superadmin123")
@@ -2383,10 +2386,10 @@ Visiteur : "Vous livrez en Belgique ?"
 {"message": "Oui, on livre en Belgique. La livraison est offerte dès 80 € en Europe ; en dessous, le tarif s'affiche au moment de payer.", "produits": [], "contact": ""}
 Visiteur : "c'est quoi le mieux ?"
 {"message": "Ça dépend de ce que tu cherches : plutôt un vêtement ou un tableau ?", "produits": [], "contact": ""}
-Visiteur : "vous avez un code promo ?"
+Visiteur : "tu sais si vous faites des cartes cadeaux ?"
 {"message": "Je n'ai pas cette information. Je peux transmettre ta question à l'équipe, si tu veux.", "produits": [], "contact": "propose"}
-Visiteur : "je peux parler à quelqu'un ?"
-{"message": "Bien sûr. Laissez-moi votre prénom et votre numéro de téléphone (ou votre email), l'équipe vous recontacte rapidement.", "produits": [], "contact": "demande"}"""
+Visiteur : "tu peux demander à quelqu'un de me rappeler ?"
+{"message": "Bien sûr. Donne-moi ton prénom et ton numéro de téléphone (ou ton email), l'équipe te recontacte rapidement.", "produits": [], "contact": "demande"}"""
 
 PLAIN_FORMAT = """
 
