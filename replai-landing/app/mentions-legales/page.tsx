@@ -17,6 +17,7 @@ const sections: LegalSection[] = [
         "SIRET : en cours d'attribution (entreprise en cours d'immatriculation)",
         "TVA non applicable, art. 293 B du code général des impôts",
         "Email : contact@aireply.fr",
+        "Téléphone : +33 7 82 97 77 46",
       ],
       "Directeur de la publication : Gianluca Ferlin.",
     ],
