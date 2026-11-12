@@ -71,3 +71,14 @@ class ReportLog(Base):
 
     id = Column(String, primary_key=True)      # token + ":" + "2026-10"
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CatalogSnapshot(Base):
+    """Derniere version connue du catalogue d'une boutique. Sert de secours quand la
+    boutique ne repond pas juste apres un redemarrage du serveur (cache memoire vide)."""
+    __tablename__ = "replai_catalogs"
+
+    shop_url = Column(String, primary_key=True)
+    platform = Column(String, nullable=True)
+    products = Column(Text)                    # liste de produits normalises, en JSON
+    updated_at = Column(DateTime, default=datetime.utcnow)

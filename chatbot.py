@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from database import SessionLocal, engine
-from models import Base, Client, Conversation, Message as MessageModel, Event, ReportLog
+from models import Base, Client, Conversation, Message as MessageModel, Event, ReportLog, CatalogSnapshot
 
 load_dotenv()
 
@@ -107,36 +107,17 @@ STATE_PROPOSED = "proposed"
 STATE_ASKING   = "asking"
 STATE_DONE     = "done"
 
-MSG_PROPOSAL  = "Souhaitez-vous être contacté par notre équipe ?"
-MSG_ASKING    = "Parfait ! Donnez-moi votre prénom et votre numéro de téléphone, notre équipe vous contactera rapidement."
-MSG_CONFIRMED = "Merci ! Notre équipe va vous contacter très rapidement. À bientôt !"
-MSG_DECLINED  = "Pas de problème, je reste à votre disposition si besoin !"
+# Messages fixes du parcours de rappel, ecrits sans "tu" ni "vous" : ils suivent
+# aussi bien une conversation ou le visiteur tutoie qu'une ou il vouvoie.
+MSG_ASKING    = "Parfait ! Il me faut juste un prénom et un numéro de téléphone (ou un email), et l'équipe reprend contact rapidement."
+MSG_CONFIRMED = "Merci, c'est bien transmis ! L'équipe reprend contact très rapidement."
+MSG_DECLINED  = "Pas de problème ! Je reste disponible si besoin."
 
-
-# ── Détection demande humain ──────────────────────────────────────────────────
-HUMAN_REGEX = re.compile(
-    r'\b(humain|assistant|conseiller|agent|rappel|rappeler|rendez.?vous|rdv|'
-    r'devis|intervention|technicien|quelqu.un|votre equipe|'
-    r'human|someone|somebody|callback|call me|speak to|talk to|'
-    r'appointment|quote|technician|real person|your team|'
-    r'umano|qualcuno|richiamare|richiamarmi|appuntamento|preventivo|tecnico|'
-    r'humano|alguien|llamarme|cita|presupuesto|tecnico|'
-    r'mensch|jemand|zuruckrufen|termin|angebot|techniker|'
-    r'humano|alguem|ligar|orcamento|tecnico|'
-    r'mens|iemand|terugbellen|afspraak|offerte|monteur)\b',
-    re.IGNORECASE
-)
-
-GPT_PROPOSES_HUMAN = re.compile(
-    r'(mettre en relation|vous contacter|vous rappeler|prendre rendez|'
-    r'un devis|un technicien|notre equipe|nos conseillers|un expert|contactez.nous|'
-    r'arrange for|put you in touch|contact you|call you back|'
-    r'our team|a technician|an expert|schedule|get in touch|'
-    r'metterti in contatto|contattarti|richiamarti|il nostro team|'
-    r'ponernos en contacto|contactarte|nuestro equipo|'
-    r'kontaktieren|unser team|in verbindung)',
-    re.IGNORECASE
-)
+# Le parcours de rappel est pilote par l'IA (champ "contact" de sa reponse), plus par
+# des mots-cles : "comment marche votre assistant ?" ou "quelqu'un a deja achete ce
+# hoodie ?" recevaient "Souhaitez-vous etre contacte ?" au lieu d'une vraie reponse.
+# La garantie reste dans le code : des qu'un visiteur donne un numero ou un email,
+# l'equipe est prevenue (voir chat()).
 
 
 # ── Fonctions GPT ─────────────────────────────────────────────────────────────
@@ -296,6 +277,25 @@ def contains_contact_info(message: str) -> bool:
     return len(digits) >= 6 or bool(EMAIL_RE.search(message))
 
 
+PHONE_RE = re.compile(r"(?<![\w#])(\+|00)?\d(?:[ .\-]?\d){8,13}(?!\w)")
+
+
+def clear_contact(message: str) -> Optional[str]:
+    """Email ou numero de telephone donne dans un message (forme normalisee), sinon None.
+    Plus strict que contains_contact_info : sert en dehors du parcours de rappel, ou un
+    numero de commande ou de suivi ne doit pas etre pris pour un telephone."""
+    m = EMAIL_RE.search(message or "")
+    if m:
+        return m.group(0).lower().strip(".,;:!?")
+    for m in PHONE_RE.finditer(message or ""):
+        digits = re.sub(r"\D", "", m.group(0))
+        if m.group(1) and 10 <= len(digits) <= 15:            # +33 6 12 34 56 78, 0032...
+            return digits
+        if digits.startswith("0") and 9 <= len(digits) <= 12:  # 06 12 34 56 78
+            return digits
+    return None
+
+
 # ── Gestion état ──────────────────────────────────────────────────────────────
 def get_state(conv_id: str, db: Session) -> str:
     try:
@@ -337,31 +337,42 @@ def bot_reply(text_content: str, conv_id: str, needs_human: bool = False, produc
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
-def send_human_email(conv_id: str, contact_info: str, client_obj: Client):
+def send_human_email(conv_id: str, contact_info: str, client_obj: Client, context: Optional[list] = None):
+    """Previent le proprietaire qu'un visiteur veut etre recontacte. context : ses derniers
+    messages avant les coordonnees, pour savoir pourquoi le rappeler."""
     print("EMAIL START")
     if not client_obj.client_email:
         print("EMAIL SKIP: pas d email configure")
         return
     try:
+        asked = [m.strip() for m in (context or []) if m and m.strip() and not contains_contact_info(m)][-3:]
+        asked_html = ""
+        if asked:
+            asked_html = ("<p><strong>Sa demande :</strong></p><ul style='margin-top:0;color:#333'>"
+                          + "".join("<li>" + html_lib.escape(m[:400]) + "</li>" for m in asked) + "</ul>")
         params = {
             "from": MAIL_FROM,
             "to": [client_obj.client_email],
-            "subject": "Nouveau client a rappeler - " + client_obj.business_name,
+            "subject": "Nouveau client à rappeler - " + client_obj.business_name,
             "html": (
                 "<div style='font-family:Arial,sans-serif;max-width:600px'>"
-                "<h2 style='color:#6366f1'>Nouveau client a rappeler</h2>"
-                "<p><strong>Business :</strong> " + client_obj.business_name + "</p>"
+                "<h2 style='color:#6366f1'>Nouveau client à rappeler</h2>"
+                "<p><strong>Business :</strong> " + html_lib.escape(client_obj.business_name or "") + "</p>"
                 "<p><strong>Conversation :</strong> " + conv_id[:8] + "</p>"
-                "<p><strong>Coordonnees :</strong> "
+                "<p><strong>Coordonnées :</strong> "
                 "<span style='color:#4f8eff;font-weight:bold;font-size:16px'>"
                 + html_lib.escape(contact_info) +
                 "</span></p>"
+                + asked_html +
                 "<p>Recontactez ce client rapidement !</p>"
                 "<hr style='border:none;border-top:1px solid #eee'>"
-                "<p style='color:#888;font-size:12px'>Replai — AI Widget pour TPEs</p>"
+                "<p style='color:#888;font-size:12px'>Replai · assistant IA pour boutiques en ligne</p>"
                 "</div>"
             )
         }
+        visitor_email = EMAIL_RE.search(contact_info or "")
+        if visitor_email:      # "Repondre" ecrit directement au visiteur
+            params["reply_to"] = visitor_email.group(0).strip(".,;:!?")
         email = resend.Emails.send(params)
         print("EMAIL SENT:", email['id'])
     except Exception as e:
@@ -672,15 +683,63 @@ def _load_catalog(shop_url: str) -> dict:
             catalog = {"platform": platform, "products": products, "text": catalog_to_text(products, shop_url)}
             CATALOG_CACHE[shop_url] = (now, catalog)
             print("CATALOG OK:", shop_url, platform, len(products), "produits")
+            _save_snapshot(shop_url, catalog)
             return catalog
         except Exception as e:
             errors.append("%s: %s" % (platform, e))
     print("CATALOG ERROR:", shop_url, " | ".join(errors))
-    # On garde l'ancienne version (ou rien) et on ne reessaie que dans 5 min,
-    # pour ne pas ralentir chaque message si la boutique est injoignable.
+    # On garde l'ancienne version et on ne reessaie que dans 5 min, pour ne pas ralentir
+    # chaque message si la boutique est injoignable. Sans ancienne version en memoire
+    # (serveur qui vient de redemarrer), on reprend la derniere enregistree en base et on
+    # reessaie des 1 min : une boutique Shopify refuse parfois les lectures trop rapprochees.
     previous = cached[1] if cached else EMPTY_CATALOG
-    CATALOG_CACHE[shop_url] = (now - CATALOG_TTL + 300, previous)
+    if not previous["products"]:
+        previous = _load_snapshot(shop_url)
+    CATALOG_CACHE[shop_url] = (now - CATALOG_TTL + (300 if cached and cached[1]["products"] else 60), previous)
     return previous
+
+
+_SNAPSHOT_SAVED = {}        # shop_url -> empreinte de la derniere version enregistree
+
+
+def _save_snapshot(shop_url: str, catalog: dict):
+    """Enregistre le catalogue en base s'il a change (secours apres un redemarrage)."""
+    if not catalog.get("products"):
+        return
+    try:
+        data = json.dumps(catalog["products"], ensure_ascii=False)
+        mark = hash(data)
+        if _SNAPSHOT_SAVED.get(shop_url) == mark:
+            return
+        db = SessionLocal()
+        try:
+            row = db.query(CatalogSnapshot).filter(CatalogSnapshot.shop_url == shop_url).first()
+            if not row:
+                row = CatalogSnapshot(shop_url=shop_url)
+                db.add(row)
+            row.platform, row.products, row.updated_at = catalog.get("platform", ""), data, datetime.utcnow()
+            db.commit()
+            _SNAPSHOT_SAVED[shop_url] = mark
+        finally:
+            db.close()
+    except Exception as e:
+        print("CATALOG SNAPSHOT SAVE ERROR:", shop_url, e)
+
+
+def _load_snapshot(shop_url: str) -> dict:
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(CatalogSnapshot).filter(CatalogSnapshot.shop_url == shop_url).first()
+            if row and row.products:
+                products = json.loads(row.products)
+                print("CATALOG SNAPSHOT USED:", shop_url, len(products), "produits, du", row.updated_at)
+                return {"platform": row.platform or "", "products": products, "text": catalog_to_text(products, shop_url)}
+        finally:
+            db.close()
+    except Exception as e:
+        print("CATALOG SNAPSHOT LOAD ERROR:", shop_url, e)
+    return EMPTY_CATALOG
 
 
 def get_catalog_text(shop_url: str) -> str:
@@ -2110,10 +2169,12 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     visitor_msgs = get_visitor_messages(conv_id, db)
     page_lang = page_lang_hint(msg.page_lang)
 
+    earlier_msgs = visitor_msgs[:-1]     # ce que le visiteur avait ecrit avant ce message
+
     if state == STATE_ASKING:
         if contains_contact_info(msg.message):
             if c:
-                send_human_email(conv_id, msg.message, c)
+                send_human_email(conv_id, msg.message, c, earlier_msgs)
             set_state(conv_id, STATE_DONE, db)
             reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs, page_lang)
             save_message(conv_id, "assistant", reply, db)
@@ -2131,6 +2192,26 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         # OTHER : le visiteur a change de sujet -> reponse normale plus bas
         state = STATE_NORMAL
 
+    shop_url = get_shop_url(c.token, db) if c else ""
+    site_info = get_site_info(shop_url) if shop_url else ""
+
+    # Coordonnees donnees en dehors du parcours de rappel ("rappelez-moi au 06...", ou un
+    # numero laisse apres que l'IA a propose de transmettre) : on previent toujours
+    # l'equipe. Sans cela l'IA repondait "c'est note" et personne n'etait prevenu.
+    # On ignore une coordonnee deja donnee, et celles de l'entreprise elle-meme.
+    contact = clear_contact(msg.message)
+    if contact and c:
+        own = " ".join([c.system_prompt or "", c.client_email or "", site_info]).lower()
+        if contact in own or contact in re.sub(r"[ .\-]", "", own):
+            contact = None
+    if contact and contact not in {clear_contact(m) for m in earlier_msgs}:
+        if c:
+            send_human_email(conv_id, msg.message, c, earlier_msgs)
+        set_state(conv_id, STATE_DONE, db)
+        reply = translate_to_visitor_language(MSG_CONFIRMED, visitor_msgs, page_lang)
+        save_message(conv_id, "assistant", reply, db)
+        return bot_reply(reply, conv_id, True)
+
     if state == STATE_PROPOSED:
         label = classify_reply(msg.message, "proposal")
         if label == "YES":
@@ -2146,12 +2227,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         # OTHER : nouvelle question -> reponse normale plus bas
         state = STATE_NORMAL
 
-    if HUMAN_REGEX.search(msg.message):
-        set_state(conv_id, STATE_PROPOSED, db)
-        reply = translate_to_visitor_language(MSG_PROPOSAL, visitor_msgs, page_lang)
-        save_message(conv_id, "assistant", reply, db)
-        return bot_reply(reply, conv_id, False)
-
     history = db.query(MessageModel).filter(
         MessageModel.conversation_id == conv_id
     ).order_by(MessageModel.created_at).all()
@@ -2161,7 +2236,6 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     else:
         base_prompt = "Tu es un assistant virtuel professionnel."
 
-    shop_url = get_shop_url(c.token, db) if c else ""
     catalog = get_catalog(shop_url) if shop_url else EMPTY_CATALOG
     if catalog["text"]:
         base_prompt += (
@@ -2169,17 +2243,15 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "si une autre information du prompt contredit ce catalogue, c'est le catalogue qui a raison. "
             "Ne propose jamais un produit ou une taille absent ou epuise) :\n" + catalog["text"]
         )
-    if shop_url:
-        site_info = get_site_info(shop_url)
-        if site_info:
-            base_prompt += (
-                "\n\nINFOS DU SITE DE LA BOUTIQUE (newsletter, reseaux, livraison, retours). "
-                "Utilise-les pour repondre ; si la premiere partie de ce prompt les contredit, "
-                "c'est la premiere partie qui a raison. LIVRAISON ET RETOURS : pays livres, delais, frais et seuil "
-                "de livraison offerte viennent UNIQUEMENT des conditions officielles ci-dessous, dans toutes les "
-                "langues. Si le bandeau ou la page d'accueil disent autre chose (ex : 'worldwide', un autre montant), "
-                "ignore-les et suis les conditions officielles. Un pays absent des conditions n'est pas livre :\n" + site_info
-            )
+    if site_info:
+        base_prompt += (
+            "\n\nINFOS DU SITE DE LA BOUTIQUE (newsletter, reseaux, livraison, retours). "
+            "Utilise-les pour repondre ; si la premiere partie de ce prompt les contredit, "
+            "c'est la premiere partie qui a raison. LIVRAISON ET RETOURS : pays livres, delais, frais et seuil "
+            "de livraison offerte viennent UNIQUEMENT des conditions officielles ci-dessous, dans toutes les "
+            "langues. Si le bandeau ou la page d'accueil disent autre chose (ex : 'worldwide', un autre montant), "
+            "ignore-les et suis les conditions officielles. Un pays absent des conditions n'est pas livre :\n" + site_info
+        )
 
     # Le texte de la page n'est utile que si le visiteur est sur le site du client
     # (sur la page demo d'aireply.fr, ce serait le texte marketing de Replai).
@@ -2187,9 +2259,22 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
     if page_ok and shop_url and msg.page_url and _host(msg.page_url) != _host(shop_url):
         page_ok = False
     if page_ok:
-        base_prompt += "\n\nCONTENU DE LA PAGE CONSULTEE PAR LE VISITEUR :\n" + msg.page_content
+        base_prompt += (
+            "\n\nCONTENU DE LA PAGE CONSULTEE PAR LE VISITEUR (ce qu'il a sous les yeux : sers-t'en pour comprendre "
+            "de quoi il parle. Si la page montre un exemple ou une demonstration, comme une boutique ou un produit "
+            "fictifs, ce n'est pas quelque chose que tu vends : dis-le si le visiteur s'y trompe) :\n" + msg.page_content
+        )
 
     shop_mode = bool(catalog["products"])
+    if shop_url and not shop_mode:
+        # Boutique injoignable (ou catalogue vide) : l'IA ne doit ni inventer, ni parler de "catalogue".
+        base_prompt += (
+            "\n\nSTOCK INDISPONIBLE POUR LE MOMENT : tu ne peux pas consulter les produits, les prix ni les stocks "
+            "de la boutique en ce moment. Ne cite aucun produit, prix ou taille de memoire (seulement ce qui figure "
+            "dans la page consultee). Si la question porte sur un produit ou une disponibilite, dis que tu ne peux pas "
+            "le verifier a l'instant, invite le visiteur a regarder la fiche du produit sur le site et propose de "
+            "transmettre sa question a l'equipe."
+        )
     height = visitor_height(visitor_msgs) if shop_mode else None
     estimates = size_estimates(catalog, height) if height else []
     if estimates:
@@ -2206,7 +2291,13 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
             "a utiliser : ne dis jamais qu'une taille est disponible pour un produit de la liste EPUISEE :\n"
             + "\n".join(availability)
         )
-    base_prompt += build_reply_rules(shop_mode)
+    if state == STATE_DONE:
+        base_prompt += (
+            "\n\nLE VISITEUR A DEJA LAISSE SES COORDONNEES dans cette conversation : l'equipe les a recues et va le "
+            "recontacter. Ne les redemande pas et ne propose pas de nouveau de transmettre (\"contact\": \"\") ; "
+            "s'il a une autre demande pour l'equipe, dis-lui qu'il pourra en parler lors de ce contact."
+        )
+    base_prompt += build_reply_rules(shop_mode, bool(shop_url))
 
     messages_for_openai = [{"role": "system", "content": base_prompt}]
     for m in history:
@@ -2223,10 +2314,17 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
         % (lang_name, lang_name, lang_name)
     )})
 
-    reply, picks = ask_assistant(messages_for_openai, shop_mode)
+    reply, picks, contact_step = ask_assistant(messages_for_openai, shop_mode)
 
-    if GPT_PROPOSES_HUMAN.search(reply):
-        set_state(conv_id, STATE_PROPOSED, db)
+    # L'IA indique elle-meme si elle vient de demander les coordonnees du visiteur
+    # ou de proposer de transmettre sa demande : la suite du parcours est geree plus haut.
+    # (Une fois les coordonnees recues, on reste en "done" : c'est ce qui affiche le
+    # visiteur dans "Clients a rappeler".)
+    if state != STATE_DONE:
+        if contact_step == "demande":
+            set_state(conv_id, STATE_ASKING, db)
+        elif contact_step == "propose":
+            set_state(conv_id, STATE_PROPOSED, db)
 
     save_message(conv_id, "assistant", reply, db)
     cards = cards_from_picks(picks, catalog) if picks else product_cards(reply, catalog)
@@ -2237,46 +2335,84 @@ def chat(msg: ChatRequest, db: Session = Depends(get_db)):
 REPLY_RULES = """
 
 COMMENT REPONDRE
-Tu es le vendeur de cette boutique, dans le chat du site. Tu parles comme un bon vendeur en magasin : direct, simple, chaleureux, jamais commercial ou robotique.
+%INTRO%
 
 1. Reponds d'abord a la question, en 1 a 3 phrases courtes. Une idee par phrase. Pas de longue phrase avec plein de "et" et de "donc".
 2. Ne reformule pas la question, pas de compliments ni de formules toutes faites ("excellent choix", "silhouette elancee", "profite de sa belle matiere", "n'hesite pas").
 3. Reponds dans la langue du dernier message du visiteur. S'il tutoie, tutoie ; sinon vouvoie.
-4. Utilise uniquement les informations de ce prompt (catalogue, infos du site, page consultee). Si l'information n'y est pas, ne l'invente pas et n'affirme pas non plus que la chose n'existe pas (ex : un code promo) : dis simplement que tu n'as pas l'info et propose de transmettre la question a l'equipe. En cas de contradiction, les conditions officielles (livraison, retours) priment sur le reste du site.
-5. Si la question est vague ou peut vouloir dire plusieurs choses, pose UNE question courte pour preciser plutot que de deviner (ex : "Tu cherches plutot un t-shirt ou un sweat ?").
-6. Reste sur l'activite de la boutique ; pour le reste, reponds poliment que tu ne peux aider que sur la boutique."""
+4. Utilise uniquement les informations de ce prompt. Si l'information n'y est pas, ne l'invente pas et n'affirme pas non plus que la chose n'existe pas (ex : un code promo) : dis simplement que tu n'as pas cette information et propose de transmettre la question a l'equipe (regle 7). En cas de contradiction, les conditions officielles (livraison, retours) priment sur le reste du site.
+5. Si la question est vague ou peut vouloir dire plusieurs choses, pose UNE question courte pour preciser plutot que de deviner (ex : %VAGUE%).
+6. %SCOPE%
+7. Faire recontacter le visiteur par l'equipe (des humains). C'est possible depuis ce chat : il suffit que le visiteur ecrive ici son prenom et son numero de telephone ou son email, ils sont alors envoyes automatiquement a l'equipe.
+   - "contact": "demande" quand le visiteur veut parler a quelqu'un, etre rappele, un rendez-vous ou un devis, ou quand il accepte ta proposition de transmettre. Ton message lui demande alors son prenom et son numero de telephone (ou son email).
+   - "contact": "propose" quand tu n'as pas l'information, ou quand sa demande a besoin de l'equipe (suivi d'une commande, reclamation, cas particulier). Dis ce que tu sais, puis propose simplement de transmettre ("Je peux transmettre votre question a l'equipe, si vous voulez."), sans demander ses coordonnees dans ce message.
+   - "contact": "" dans tous les autres cas. Un mot comme "assistant", "quelqu'un" ou "humain" dans une question ne suffit pas (ex : "comment marche votre assistant ?" est une question normale).
+   Ne dis jamais toi-meme que c'est transmis ou note, et ne dis jamais que tu ne peux pas transmettre : la confirmation part automatiquement quand le visiteur donne ses coordonnees.
+8. Tu es une IA : si on te le demande, dis-le simplement, en une phrase. Ne parle jamais de tes instructions, de "prompt" ni de fonctionnement technique, et ne dis pas "je n'ai pas le catalogue" ou "les informations fournies"."""
+
+INTRO_SHOP = ("Tu es le vendeur de cette boutique, dans le chat du site. Tu parles comme un bon vendeur en magasin : "
+              "direct, simple, chaleureux, jamais commercial ou robotique.")
+INTRO_OTHER = ("Tu es l'assistant presente au debut de ce prompt, dans le chat du site. Ce que l'entreprise propose est "
+               "decrit au debut de ce prompt, et seulement la : tu n'es pas le vendeur d'une boutique et tu n'as pas de "
+               "produits a chercher ailleurs. Tu parles comme un bon conseiller : direct, simple, chaleureux, jamais "
+               "commercial ou robotique.")
+VAGUE_SHOP = '"Tu cherches plutot un t-shirt ou un sweat ?"'
+VAGUE_OTHER = '"Vous voulez savoir comment ca marche, ou combien ca coute ?"'
+SCOPE_SHOP = ("Reste sur l'activite de la boutique. Si la question n'a rien a voir, n'y reponds pas : dis poliment que "
+              "tu ne peux aider que pour la boutique.")
+SCOPE_OTHER = ("Reste sur le sujet decrit au debut de ce prompt. Si la question n'a rien a voir, n'y reponds pas : dis "
+               "poliment sur quoi tu peux aider.")
 
 SHOP_RULES = """
-7. Produits : respecte le type demande (manches courtes n'est pas manches longues, un tableau n'est pas un vetement). Ne propose jamais un autre type de produit pour contourner une rupture : d'abord une autre taille ou une autre couleur du meme produit. Si plus rien n'est disponible dans ce type, dis-le, puis propose une alternative en la presentant comme telle.
-8. Ne propose que des produits et des tailles disponibles dans le catalogue. N'invente aucune mesure, matiere, delai ou stock. Si un produit demande est epuise, dis-le et propose dans la meme reponse l'alternative disponible la plus proche (autre couleur ou autre taille du meme type).
-9. Taille : donne UNE taille et la raison en une phrase (ex : "Le mannequin fait 1m75 et porte un S."). Si la taille ideale est epuisee, dis-le simplement et donne la plus proche disponible. S'il te manque sa taille ou sa morphologie, demande-la en une question.
-10. Le prix, la photo et le bouton d'ajout au panier s'affichent automatiquement sous ton message pour chaque produit que tu recommandes : ne mets ni lien, ni prix, ni nom de produit en fin de message, et ne dis pas "voici le lien" ou "commande ici".
+9. Produits : respecte le type demande (manches courtes n'est pas manches longues, un tableau n'est pas un vetement). Ne propose jamais un autre type de produit pour contourner une rupture : d'abord une autre taille ou une autre couleur du meme produit. Si plus rien n'est disponible dans ce type, dis-le, puis propose une alternative en la presentant comme telle.
+10. Ne propose que des produits et des tailles disponibles dans le catalogue. N'invente aucune mesure, matiere, delai ou stock. Si un produit demande est epuise, dis-le et propose dans la meme reponse l'alternative disponible la plus proche (autre couleur ou autre taille du meme type). Si la boutique ne vend pas le type de produit demande (aucun dans le catalogue), dis-le simplement ("On n'a pas de sweat.") et cite ce qui s'en rapproche le plus : ce n'est pas une information manquante, inutile de proposer de transmettre.
+11. Taille : donne UNE taille et la raison en une phrase (ex : "Le mannequin fait 1m75 et porte un S."). Si la taille ideale est epuisee, dis-le simplement et donne la plus proche disponible. S'il te manque sa taille ou sa morphologie, demande-la en une question.
+12. Le prix, la photo et le bouton d'ajout au panier s'affichent automatiquement sous ton message pour chaque produit que tu recommandes : ne mets ni lien, ni prix, ni nom de produit en fin de message, et ne dis pas "voici le lien" ou "commande ici".
 
 FORMAT : reponds uniquement avec un objet JSON :
-{"message": "ce que tu dis au visiteur", "produits": [{"url": "url exacte du produit dans le catalogue", "taille": "taille conseillee, ou vide"}]}
+{"message": "ce que tu dis au visiteur", "produits": [{"url": "url exacte du produit dans le catalogue", "taille": "taille conseillee, ou vide"}], "contact": ""}
 "produits" contient 0 a 3 produits que tu recommandes vraiment dans ton message (liste vide si la question ne porte pas sur un produit precis).
+"contact" vaut "demande", "propose" ou "" (regle 7).
 
 EXEMPLES DU TON ATTENDU
 Visiteur : "je fais 1m89, quel t-shirt tu me conseilles ?"
-{"message": "Je partirais sur le Kiss Tee blanc en M.\\nLe mannequin fait 1m75 et porte un S, donc le L aurait été idéal, mais il est épuisé. Le M t'ira un peu plus court et près du corps.", "produits": [{"url": "https://boutique.fr/products/kiss-tee-white", "taille": "M"}]}
+{"message": "Je partirais sur le Kiss Tee blanc en M.\\nLe mannequin fait 1m75 et porte un S, donc le L aurait été idéal, mais il est épuisé. Le M t'ira un peu plus court et près du corps.", "produits": [{"url": "https://boutique.fr/products/kiss-tee-white", "taille": "M"}], "contact": ""}
 Visiteur : "Je veux le sweat noir en L"
-{"message": "Le sweat noir est épuisé dans toutes les tailles, désolé.\\nIl reste le même en gris, disponible en L.", "produits": [{"url": "https://boutique.fr/products/sweat-gris", "taille": "L"}]}
+{"message": "Le sweat noir est épuisé dans toutes les tailles, désolé.\\nIl reste le même en gris, disponible en L.", "produits": [{"url": "https://boutique.fr/products/sweat-gris", "taille": "L"}], "contact": ""}
 Visiteur : "Vous livrez en Belgique ?"
-{"message": "Oui, on livre en Belgique. La livraison est offerte dès 80 € en Europe ; en dessous, le tarif s'affiche au moment de payer.", "produits": []}
+{"message": "Oui, on livre en Belgique. La livraison est offerte dès 80 € en Europe ; en dessous, le tarif s'affiche au moment de payer.", "produits": [], "contact": ""}
 Visiteur : "c'est quoi le mieux ?"
-{"message": "Ça dépend de ce que tu cherches : plutôt un vêtement ou un tableau ?", "produits": []}"""
+{"message": "Ça dépend de ce que tu cherches : plutôt un vêtement ou un tableau ?", "produits": [], "contact": ""}
+Visiteur : "vous avez un code promo ?"
+{"message": "Je n'ai pas cette information. Je peux transmettre ta question à l'équipe, si tu veux.", "produits": [], "contact": "propose"}
+Visiteur : "je peux parler à quelqu'un ?"
+{"message": "Bien sûr. Laissez-moi votre prénom et votre numéro de téléphone (ou votre email), l'équipe vous recontacte rapidement.", "produits": [], "contact": "demande"}"""
 
 PLAIN_FORMAT = """
 
-FORMAT : reponds uniquement avec un objet JSON : {"message": "ce que tu dis au visiteur", "produits": []}"""
+FORMAT : reponds uniquement avec un objet JSON : {"message": "ce que tu dis au visiteur", "produits": [], "contact": ""}
+"contact" vaut "demande", "propose" ou "" (regle 7).
+
+EXEMPLES
+Visiteur : "je peux parler à quelqu'un ?"
+{"message": "Bien sûr. Laissez-moi votre prénom et votre numéro de téléphone (ou votre email), l'équipe vous recontacte rapidement.", "produits": [], "contact": "demande"}
+Visiteur : une question dont la reponse n'est pas dans ce prompt
+{"message": "Je n'ai pas cette information. Je peux transmettre votre question à l'équipe, si vous voulez.", "produits": [], "contact": "propose"}"""
 
 
-def build_reply_rules(shop_mode: bool) -> str:
-    return REPLY_RULES + ("\n" + SHOP_RULES if shop_mode else PLAIN_FORMAT)
+def build_reply_rules(shop_mode: bool, is_shop: bool = True) -> str:
+    """shop_mode : le catalogue est charge (regles produits + fiches).
+    is_shop : le client est une boutique en ligne (sinon : entreprise sans catalogue, comme Replai)."""
+    rules = (REPLY_RULES
+             .replace("%INTRO%", INTRO_SHOP if is_shop else INTRO_OTHER)
+             .replace("%VAGUE%", VAGUE_SHOP if is_shop else VAGUE_OTHER)
+             .replace("%SCOPE%", SCOPE_SHOP if is_shop else SCOPE_OTHER))
+    return rules + ("\n" + SHOP_RULES if shop_mode else PLAIN_FORMAT)
 
 
 def ask_assistant(messages: list, shop_mode: bool):
-    """Renvoie (texte du message, produits choisis). Si le JSON est illisible, on garde le texte brut."""
+    """Renvoie (texte du message, produits choisis, etape de contact : "demande", "propose" ou "").
+    Si le JSON est illisible, on garde le texte brut."""
     response = client.chat.completions.create(
         **llm_params(CHAT_MODEL),
         messages=messages,
@@ -2288,11 +2424,12 @@ def ask_assistant(messages: list, shop_mode: bool):
         data = json.loads(raw)
         text = str(data.get("message") or "").strip()
         picks = data.get("produits") or []
+        step = str(data.get("contact") or "").strip().lower()
         if text:
-            return text, [p for p in picks if isinstance(p, dict)][:3]
+            return text, [p for p in picks if isinstance(p, dict)][:3], step if step in ("demande", "propose") else ""
     except Exception as e:
         print("REPLY JSON ERROR:", e, raw[:200])
-    return raw, []
+    return raw, [], ""
 
 
 def cards_from_picks(picks: list, catalog: dict) -> list:
