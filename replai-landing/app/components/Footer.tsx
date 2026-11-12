@@ -20,6 +20,13 @@ export default function Footer() {
           © {new Date().getFullYear()} Replai · aireply.fr · {c.footer.rights}
         </p>
       </div>
+      <nav className="mx-auto mt-6 flex max-w-6xl flex-wrap justify-center gap-x-6 gap-y-2 md:justify-end">
+        {c.footer.legal.map((l) => (
+          <a key={l.href} href={l.href} className="text-xs text-slate-500 transition-colors hover:text-white">
+            {l.label}
+          </a>
+        ))}
+      </nav>
     </footer>
   );
 }

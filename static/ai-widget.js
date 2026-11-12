@@ -26,6 +26,7 @@
   var TEXTS = {
     fr: {
       title: "Assistant IA", online: "En ligne", close: "Fermer", send: "Envoyer",
+      notice: "Assistant IA · ses réponses peuvent contenir des erreurs",
       human: "Parler à un humain", placeholder: "Écrivez votre message…", you: "Vous",
       error: "Une erreur est survenue. Réessayez.", sending: "Envoi en cours…", sent: "Demande envoyée ✓",
       welcome: "Bonjour ! Comment puis-je vous aider ?",
@@ -39,6 +40,7 @@
     },
     en: {
       title: "AI assistant", online: "Online", close: "Close", send: "Send",
+      notice: "AI assistant · its answers may contain mistakes",
       human: "Talk to a person", placeholder: "Type your message…", you: "You",
       error: "Something went wrong. Please try again.", sending: "Sending…", sent: "Request sent ✓",
       welcome: "Hi! How can I help you?",
@@ -195,6 +197,10 @@
     "  display:flex; align-items:center; gap:8px; padding:10px 12px;",
     "  border-top:1px solid var(--rpl-border); background:var(--rpl-bg) !important; flex-shrink:0;",
     "}",
+    "#rpl-notice {",
+    "  padding:0 12px 8px; margin-top:-3px; font-size:10.5px; line-height:1.3; text-align:center;",
+    "  color:var(--rpl-muted) !important; background:var(--rpl-bg) !important; flex-shrink:0;",
+    "}",
     "#rpl-input {",
     "  flex:1; background:var(--rpl-bubble) !important; border:1px solid var(--rpl-border);",
     "  border-radius:10px; padding:9px 14px; color:var(--rpl-text) !important; font-size:13.5px;",
@@ -231,7 +237,8 @@
     "  #rpl-shade.rpl-open { display:block; }",
     "  #rpl-input { font-size:16px; padding:10px 14px; }",
     "  #rpl-send { width:42px; height:42px; }",
-    "  #rpl-input-row { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }",
+    "  #rpl-input-row { padding:10px 12px 8px; }",
+    "  #rpl-notice { padding:0 12px calc(8px + env(safe-area-inset-bottom)); font-size:11px; }",
     "  #rpl-msgs { overscroll-behavior:contain; padding:14px; }",
     "  .rpl-bubble { font-size:15px; }",
     "  .rpl-msg { max-width:90%; }",
@@ -281,7 +288,8 @@
     "<div id='rpl-input-row'>",
     "  <input id='rpl-input' autocomplete='off' />",
     "  <button id='rpl-send'>" + svg(ICON_SEND, 17, 2) + "</button>",
-    "</div>"
+    "</div>",
+    "<div id='rpl-notice'></div>"
   ].join("");
 
   var teaser = document.createElement("div");
@@ -412,6 +420,7 @@
     document.getElementById("rpl-close").setAttribute("aria-label", T("close"));
     sendBtn.setAttribute("aria-label", T("send"));
     input.placeholder = T("placeholder");
+    document.getElementById("rpl-notice").textContent = T("notice");
     if (!humanBtn.disabled) humanBtn.innerHTML = humanLabel();
     else if (state.h) humanBtn.textContent = T("sent");
     var whos = msgs.querySelectorAll(".rpl-who");

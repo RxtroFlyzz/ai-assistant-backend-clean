@@ -141,7 +141,14 @@ const fr = {
     evening: "Il se fait tard… je reste là.",
     night: "Réponse envoyée à 02:47",
   },
-  footer: { rights: "Tous droits réservés" },
+  footer: {
+    rights: "Tous droits réservés",
+    legal: [
+      { href: "/mentions-legales", label: "Mentions légales" },
+      { href: "/cgv", label: "CGV" },
+      { href: "/confidentialite", label: "Confidentialité" },
+    ],
+  },
 };
 
 export type Copy = typeof fr;
@@ -280,7 +287,14 @@ const en: Copy = {
     evening: "Getting late… I'm still here.",
     night: "Reply sent at 02:47",
   },
-  footer: { rights: "All rights reserved" },
+  footer: {
+    rights: "All rights reserved",
+    legal: [
+      { href: "/mentions-legales", label: "Legal notice" },
+      { href: "/cgv", label: "Terms of sale" },
+      { href: "/confidentialite", label: "Privacy" },
+    ],
+  },
 };
 
 export const COPY = { fr, en };
