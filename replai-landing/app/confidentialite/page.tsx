@@ -82,7 +82,7 @@ const sections: LegalSection[] = [
     title: "Durées de conservation",
     blocks: [
       [
-        "Conversations et coordonnées laissées dans une conversation : 12 mois au plus.",
+        "Conversations et coordonnées laissées dans une conversation : 12 mois au plus après le dernier message. Une demande de rappel reste toutefois conservée tant que la boutique ne l'a pas traitée.",
         "Demandes de démo : 12 mois au plus après le dernier échange.",
         "Données d'une boutique cliente : supprimées dans les 30 jours suivant la fin du contrat.",
         "Factures et pièces comptables : 10 ans, durée imposée par la loi.",

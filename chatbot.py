@@ -2112,9 +2112,54 @@ def send_reports(req: SendReportsRequest, db: Session = Depends(get_db)):
     return {c.token: send_monthly_report(c, year, month, db, req.force) for c in q.all()}
 
 
+# ── Conservation des donnees : fenetre glissante de 12 mois ─────────────────
+# Engagement pris dans la politique de confidentialite et les CGV. Chaque conversation
+# est supprimee quand son dernier message a plus de 12 mois ; on garde donc toujours
+# les 12 derniers mois. Exception : une demande de rappel non traitee reste tant que
+# le client ne l'a pas marquee comme traitee.
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "365"))
+_LAST_PURGE_DAY = None
+
+
+def purge_old_data(db: Session, now: Optional[datetime] = None) -> dict:
+    if RETENTION_DAYS < 90:      # garde-fou : un mauvais reglage ne doit pas tout effacer
+        print("PURGE SKIP: RETENTION_DAYS trop court (%d)" % RETENTION_DAYS)
+        return {"conversations": 0, "messages": 0, "events": 0}
+    limit = (now or datetime.utcnow()) - timedelta(days=RETENTION_DAYS)
+    rows = db.execute(text(
+        "SELECT c.id, c.state, c.handled FROM conversations c "
+        "WHERE c.created_at < :d AND NOT EXISTS ("
+        "SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.created_at >= :d)"
+    ), {"d": limit}).fetchall()
+    ids = [r[0] for r in rows if not (r[1] == STATE_DONE and not r[2])]
+    n_msg = 0
+    for i in range(0, len(ids), 200):
+        chunk = ids[i:i + 200]
+        n_msg += db.query(MessageModel).filter(MessageModel.conversation_id.in_(chunk)).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.id.in_(chunk)).delete(synchronize_session=False)
+    n_evt = db.query(Event).filter(Event.created_at < limit).delete(synchronize_session=False)
+    db.commit()
+    return {"conversations": len(ids), "messages": n_msg, "events": n_evt}
+
+
 def _reports_loop():
-    """Envoie automatiquement les rapports du mois precedent, les 3 premiers jours du mois apres 9 h."""
+    """Envoie automatiquement les rapports du mois precedent, les 3 premiers jours du mois apres 9 h.
+    Une fois par jour, supprime aussi les donnees de plus de 12 mois."""
+    global _LAST_PURGE_DAY
     while True:
+        try:
+            today = datetime.utcnow().date()
+            if _LAST_PURGE_DAY != today:
+                _LAST_PURGE_DAY = today
+                db = SessionLocal()
+                try:
+                    done = purge_old_data(db)
+                    if any(done.values()):
+                        print("PURGE:", done)
+                finally:
+                    db.close()
+        except Exception as e:
+            print("PURGE ERROR:", e)
         try:
             now = datetime.now(LOCAL_TZ)
             if now.day <= 3 and now.hour >= 9:

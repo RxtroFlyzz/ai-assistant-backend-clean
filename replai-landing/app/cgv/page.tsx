@@ -106,7 +106,7 @@ const sections: LegalSection[] = [
         "fait appel aux sous-traitants ultérieurs listés dans sa politique de confidentialité (hébergement, génération des réponses, envoi des emails) et informe le Client de tout changement ;",
         "aide le Client à répondre aux demandes des personnes concernées (accès, rectification, effacement) ;",
         "prévient le Client dans les meilleurs délais en cas de violation de données ;",
-        "conserve les conversations et les coordonnées 12 mois au plus, et supprime les données du Client dans les 30 jours suivant la fin du contrat.",
+        "conserve les conversations et les coordonnées 12 mois au plus (une demande de rappel non traitée reste visible jusqu'à ce que le Client la marque comme traitée), et supprime les données du Client dans les 30 jours suivant la fin du contrat.",
       ],
       "Le détail des traitements figure dans la politique de confidentialité, accessible à l'adresse aireply.fr/confidentialite.",
     ],
